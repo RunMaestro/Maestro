@@ -9,6 +9,7 @@
  * ends as `blocked` with a `fix`: the one thing a person has to do.
  */
 
+import type { ComeHomeReport } from './federationComeHome';
 import { HOSTED_AGENTS_SETTING } from './maestro-lib/agents/lift-pointer';
 
 /** The setting that turns automatic moves on or off (off by default). */
@@ -93,6 +94,8 @@ export interface AutoFederationSnapshot {
 	running: boolean;
 	remotes: AutoFederationRemoteStatus[];
 	agents: AutoFederationAgentStatus[];
+	/** The last run of the job that brought moved agents home, when one ran this launch. */
+	comeHome?: ComeHomeReport;
 }
 
 export function emptyAutoFederationSnapshot(autoMove = false): AutoFederationSnapshot {

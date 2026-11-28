@@ -155,7 +155,7 @@ export interface LogItemProps {
 /**
  * The fields of an agent the transcript view reads, and no others. An agent passes
  * its `Session` (a hosted agent too: its Left Bar record). The optional fields only
- * feed history backfill and the Claude mode pill.
+ * feed history backfill, the Claude mode pill, and the come-home note on queued cards.
  */
 export type TranscriptViewSession = Pick<
 	Session,
@@ -170,7 +170,16 @@ export type TranscriptViewSession = Pick<
 	| 'sessionSshRemoteConfig'
 > &
 	Partial<
-		Pick<Session, 'projectRoot' | 'remoteCwd' | 'sshRemoteId' | 'enableMaestroP' | 'maestroPMode'>
+		Pick<
+			Session,
+			| 'projectRoot'
+			| 'remoteCwd'
+			| 'sshRemoteId'
+			| 'enableMaestroP'
+			| 'maestroPMode'
+			// Set while the agent is still moved onto a host: its queued cards say why they wait.
+			| 'liftedTo'
+		>
 	>;
 
 export interface TerminalOutputProps {

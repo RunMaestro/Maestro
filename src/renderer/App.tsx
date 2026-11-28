@@ -278,6 +278,7 @@ import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import { usePeerMirrorBridge } from './hooks/federation/usePeerMirrorBridge';
 import { useLiftedAgentSettingsSync } from './hooks/federation/useLiftedAgentSettingsSync';
+import { showComeHomeNotice, useComeHome } from './hooks/federation/useComeHome';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
@@ -2271,6 +2272,8 @@ function MaestroConsoleInner() {
 	usePeerMirrorBridge();
 	// Federation: a lifted agent's settings changed here reach its host, and the host's come back.
 	useLiftedAgentSettingsSync(isLifecycleOwner);
+	// Every agent an earlier release moved onto a host comes home (hosting off), once per launch.
+	useComeHome({ enabled: isLifecycleOwner, sessionsLoaded, onReport: showComeHomeNotice });
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload

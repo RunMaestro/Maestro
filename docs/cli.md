@@ -2500,7 +2500,7 @@ maestro-cli remote-host start build-box --json
 
 `remote-host status` also reads the boot service (a second SSH call, after the first): whether a systemd user unit or a launchd agent is registered, whether it starts the host at boot or login, and whether it runs now. `--json` carries it as `service`.
 
-`remote-host stop` undoes `start`: it disables the boot service first, so nothing starts the host again, then stops the host with `host stop --wait 120` (work in flight finishes first) and reports what it stopped. The install and the host's data stay. While the host still holds agents, it names them with their count and changes nothing; move them back first (`maestro-cli unlift <agent>`), or pass `--force`, which leaves them behind on the remote (their data stays there, and nothing runs them). A running host is always asked for its agents; when they cannot be read, they count as held. A running host whose CLI does not say whether it is headless or the desktop app (an earlier release) is judged by its process, and when that does not tell either, the verb changes nothing without `--force`. When the boot service cannot be disabled (a systemd user unit with no user session, a launchd domain error), the verb exits `1` and says the host comes back at boot; for systemd it first removes the unit's `default.target.wants` link, which needs no user session. `remote-host uninstall` stops the host the same way, then removes the service file and Maestro's own install under `~/.maestro` (`cli/`, `node/`, `npm-cache/`, the launcher and the service wrapper). It keeps `~/.maestro/host.env` (your own settings), any `maestro-cli` Maestro did not install (named in the output), and the host's data directory. `--purge-data` removes the data directory too; it is refused while the host holds an agent, even with `--force`, and when the Maestro desktop app on that machine uses the same directory. Once either verb stops or removes something, it turns the remote's Federation switch off (`federation: false`), because automatic Federation would otherwise start the host again and register its service again; turn it back on with `update-ssh-remote <id> --federation on`. `--purge-data` that the last check on the remote turned down (an agent appeared while the host stopped) exits `1`. On a remote where the Maestro desktop app is the host, both verbs say so and change nothing: quit the app there to stop it. Both work on a remote whose Federation is off, since undoing Maestro's setup is what such a remote's owner asks for.
+`remote-host stop` undoes `start`: it disables the boot service first, so nothing starts the host again, then stops the host with `host stop --wait 120` (work in flight finishes first) and reports what it stopped. The install and the host's data stay. While the host still holds agents, it names them with their count and changes nothing; move them back first (`maestro-cli unlift <agent>`), or pass `--force`, which leaves them behind on the remote (their data stays there, and nothing runs them). A running host is always asked for its agents, and asked again right before anything changes; when they cannot be read, they count as held. A host counts as stopped only when its CLI answers `"running": false`; a failed or unreadable answer (for example a discovery file other users can read) leaves its state unknown, and the verb changes nothing without `--force`. A running host whose CLI does not say whether it is headless or the desktop app (an earlier release) is judged by its process, and when that does not tell either, the verb changes nothing without `--force`. When the boot service cannot be disabled (a systemd user unit with no user session, a launchd domain error), the verb exits `1` and says the host comes back at boot; for systemd it first removes the unit's `default.target.wants` link, which needs no user session. `remote-host uninstall` stops the host the same way, then removes the service file and Maestro's own install under `~/.maestro` (`cli/`, `node/`, `npm-cache/`, the launcher and the service wrapper). It keeps `~/.maestro/host.env` (your own settings), any `maestro-cli` Maestro did not install (named in the output), and the host's data directory. A service file that cannot be removed fails the verb and leaves the service disabled. `--purge-data` removes the data directory too; it is refused while the host holds an agent, even with `--force`, while the directory's store holds any agent (it reads the store itself, so agents the list hides, such as stored Pianola agents, count), when the directory is or holds `~/.maestro` or `host.env`, and when the Maestro desktop app on that machine uses the same directory. The store is read again in the same step that removes the directory. Once either verb stops or removes something, it turns the remote's Federation switch off (`federation: false`), because automatic Federation would otherwise start the host again and register its service again; turn it back on with `update-ssh-remote <id> --federation on`. A verb that fails part way after the host stopped or its service was disabled still turns the switch off. `--purge-data` that the last check on the remote turned down (an agent appeared while the host stopped) exits `1`. On a remote where the Maestro desktop app is the host, both verbs say so and change nothing: quit the app there to stop it. Both work on a remote whose Federation is off, since undoing Maestro's setup is what such a remote's owner asks for, and so does `remote-host status`, so you can check what a stop left.
 
 ```bash
 maestro-cli remote-host stop build-box
@@ -2575,24 +2575,26 @@ The desktop app runs the same lift. Right-click the agent in the Left Bar and ch
 
 ### Move a Hosted Agent Back
 
-`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
+`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. Messages that wait in the host's queue come back into this machine's queue, in their order, and a held message stays held. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
 
-| Refusal                                 | Code                    |
-| --------------------------------------- | ----------------------- |
-| The agent is not hosted                 | `RETURN_NOT_HOSTED`     |
-| The agent has no SSH remote to run on   | `RETURN_NO_SSH`         |
-| A turn is running on the host           | `RETURN_BUSY`           |
-| Messages still wait in the host's queue | `RETURN_QUEUED`         |
-| The local agent could not be restored   | `RETURN_RESTORE_FAILED` |
+| Refusal                               | Code                    |
+| ------------------------------------- | ----------------------- |
+| The agent is not hosted               | `RETURN_NOT_HOSTED`     |
+| The agent has no SSH remote to run on | `RETURN_NO_SSH`         |
+| A turn is running on the host         | `RETURN_BUSY`           |
+| The local agent could not be restored | `RETURN_RESTORE_FAILED` |
 
 When the host cannot be reached, `--offline` moves the agent back with only what this machine kept. Conversations started on the host stay there, and its copy is not removed: remove it on the host when it is back (`maestro-cli remove-agent <id>`).
+
+`maestro-cli unlift --all` moves every agent that is on a host back, one at a time, and reports each one. An agent whose host does not answer stays on its host and is reported; the others still come back. With `--offline`, every agent comes back from this machine's copy without reaching any host.
 
 ```bash
 maestro-cli unlift docs
 maestro-cli unlift docs --offline --json
+maestro-cli unlift --all --json
 ```
 
-The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. When the host cannot be reached, it offers to move the agent back offline.
+The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. It is offered for every agent on a host, whether hosted agents are on or off. When the host cannot be reached, it offers to move the agent back offline.
 
 ### One Host Per Data Directory
 
@@ -2643,6 +2645,8 @@ maestro-cli settings set federationAutoMove true        # then automatic moves (
 ```
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+
+With hosted agents off, the desktop brings every agent an earlier release moved onto a host back at launch, with no question. `federation auto` then reports that run under **Moved back from a host this launch**, with the same text as the notice the desktop shows: each agent that came home, and for one that came back with only this machine's copy, what may be missing and where it still is (`comeHome` in `--json`). An agent still on its host makes it exit `1`.
 
 ### Hosted agents in the Left Bar
 

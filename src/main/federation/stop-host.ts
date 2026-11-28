@@ -13,6 +13,7 @@
 import {
 	RemoteHostStopError,
 	describeRemoteHostStop,
+	remoteHostStopTookEffect,
 	stopRemoteHost,
 	type RemoteHostAgent,
 	type RemoteHostStopResult,
@@ -68,22 +69,45 @@ export async function stopHostFromDesktop(
 	if (!remote) return { ok: false, code: 'REMOTE_NOT_FOUND', error: 'SSH remote not found' };
 	const uninstall = options.uninstall === true;
 	const stop = deps.stop ?? stopRemoteHost;
-	const run = () => stop(remote, { uninstall, force: options.force === true });
+	// Automatic Federation would start a stopped host again, and register its service again: the
+	// remote's own Federation switch is what it honors, so a stop that took effect turns it off, in
+	// the same queued task, so a setup queued behind the stop reads the switch already off. A stop
+	// that failed part way (the host stopped, a file stayed) turns it off too.
+	// The cast keeps TypeScript from narrowing to `null`: `switchOff()` assigns it inside the task.
+	let switched = null as SshRemoteConfig[] | null;
+	const switchOff = () => {
+		switched = withFederationOff(deps.readRemotes(), remote.id);
+		if (switched) deps.writeRemotes(switched);
+	};
+	const run = async () => {
+		try {
+			const outcome = await stop(remote, { uninstall, force: options.force === true });
+			if (remoteHostStopTookEffect(outcome)) switchOff();
+			return outcome;
+		} catch (error) {
+			if (error instanceof RemoteHostStopError && remoteHostStopTookEffect(error.progress)) {
+				switchOff();
+			}
+			throw error;
+		}
+	};
 	const service = deps.service();
 	let result: RemoteHostStopResult;
 	try {
 		result = service ? await service.exclusive(run) : await run();
 	} catch (error) {
 		if (error instanceof RemoteHostStopError) {
-			return { ok: false, code: error.code, error: error.message };
+			return {
+				ok: false,
+				code: error.code,
+				error: switched
+					? `${error.message} ${federationTurnedOffNote(remote.name || remote.host)}`
+					: error.message,
+				...(switched ? { federationOff: true } : {}),
+			};
 		}
 		throw error;
 	}
-	// Automatic Federation would start a stopped host again, and register its service again: the
-	// remote's own Federation switch is what it honors, so the stop turns it off.
-	const switched =
-		result.outcome === 'done' ? withFederationOff(deps.readRemotes(), remote.id) : null;
-	if (switched) deps.writeRemotes(switched);
 	const message = describeRemoteHostStop(remote, result, uninstall);
 	// A host that comes back at boot is not the stop that was asked for, even with the host stopped now.
 	if (result.outcome === 'done' && result.serviceLeftAtBoot) {

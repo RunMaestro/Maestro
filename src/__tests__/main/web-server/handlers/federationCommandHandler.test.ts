@@ -59,11 +59,13 @@ const hosted = vi.hoisted(() => ({
 vi.mock('../../../../main/federation/federation-window', () => ({
 	requestFederationWindow: hosted.request,
 }));
+const comeHome = vi.hoisted(() => ({ report: null as unknown }));
 const idle = vi.hoisted(() => ({ autoMove: false, running: false, remotes: [], agents: [] }));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
 	autoFederationSnapshot: () => (running.on ? auto.snapshot() : idle),
 	runAutoFederationNow: async () => (running.on ? auto.runNow() : idle),
+	getComeHomeRunner: () => ({ lastReport: () => comeHome.report }),
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
@@ -97,6 +99,7 @@ describe('federation_command handler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		running.on = true;
+		comeHome.report = null;
 		handler = new WebSocketMessageHandler();
 		handler.setCallbacks({} as never);
 	});
@@ -166,6 +169,33 @@ describe('federation_command handler', () => {
 			auto: { lastPassAt: 5 },
 		});
 		expect(auto.runNow).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers federation auto with hosting off, with what the come-home job did', async () => {
+		running.on = false;
+		const report = {
+			startedAt: 1,
+			finishedAt: 2,
+			agents: [{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'online', notices: [] }],
+		};
+		comeHome.report = report;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: { autoMove: false, remotes: [], agents: [], comeHome: report },
+		});
+		// Run Now with hosting off dials nothing: the idle snapshot, with the same report.
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({
+			success: true,
+			auto: { ...idle, comeHome: report },
+		});
+		expect(auto.runNow).not.toHaveBeenCalled();
+
+		running.on = true;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: { autoMove: true, comeHome: report },
+		});
+		comeHome.report = null;
 	});
 
 	it('answers the idle automatic Federation snapshot while it does not run (hosted agents off)', async () => {

@@ -82,7 +82,7 @@ export function remoteServiceSkipFix(reason: RemoteServiceSkipReason): string {
 		case 'no-systemd-user':
 			return 'This Linux remote has no systemd user session (a container, or WSL without systemd). Start the host from your own init (run `~/.maestro/bin/maestro-host-service`), or let Maestro start it again after a reboot (it does when it finds the host stopped).';
 		case 'enable-failed':
-			return 'systemd refused to enable the user unit. Run `systemctl --user enable --now maestro-host` on the remote to see why.';
+			return `The service manager refused to enable the host's service. Run \`systemctl --user enable --now ${REMOTE_SERVICE_UNIT}\` (Linux) or \`launchctl enable gui/$(id -u)/${REMOTE_SERVICE_LABEL}\` (macOS) on the remote to see why.`;
 		case 'desktop-app':
 			return 'Maestro.app is installed on this Mac, and it is the host while it runs. Keep the app open (add it to Login Items) for its agents to keep working.';
 		case 'unsupported-os':
@@ -218,8 +218,9 @@ export function buildRemoteServiceScript(): string {
 		'say kind=launchd',
 		'uid=$(id -u); domain="gui/$uid"; launchctl print "$domain" >/dev/null 2>&1 || domain="user/$uid"',
 		// `remote-host stop` disables the label, and launchd refuses to load a disabled one: an install
-		// is the person asking for the service again.
-		`launchctl enable "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1`,
+		// is the person asking for the service again. A failed enable is a failure unless launchd
+		// confirms the label enabled: a disabled label never loads, so `deferred` would be untrue.
+		`if ! launchctl enable "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then launchctl print-disabled "$domain" 2>/dev/null | grep -Eq '"${REMOTE_SERVICE_LABEL.replace(/\./g, '\\.')}" => (false|enabled)' || skip enable-failed; fi`,
 		`if launchctl print "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then`,
 		'  if [ "$running" = 1 ]; then say state=active;',
 		`  elif launchctl kickstart "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then say state=started; else say state=start-failed; fi`,

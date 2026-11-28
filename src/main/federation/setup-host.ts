@@ -34,10 +34,16 @@ export interface DesktopSetupHostOptions {
 	stillWanted?: () => boolean;
 }
 
-/** The setup did not run: whoever asked for it no longer wants it (automatic moves turned off). */
+/**
+ * The setup did not run: whoever asked for it no longer wants it (automatic moves turned off), or
+ * the remote's own Federation switch went off while it waited (Stop Host, Remove Host).
+ */
 export const SETUP_NOT_WANTED_CODE = 'SETUP_NOT_WANTED';
 
 class SetupNotWantedError extends Error {}
+
+/** The remote's own Federation switch went off (Stop Host, Remove Host) while the setup waited. */
+class SetupRemoteOffError extends Error {}
 
 export type DesktopSetupHostAnswer =
 	| { ok: true; result: RemoteHostSetupResult; peer?: MirrorPeerSummary; reconnectError?: string }
@@ -80,7 +86,13 @@ export async function setupHostFromDesktop(
 		const setup = deps.setup ?? setupRemoteHost;
 		result = await service.exclusive(() => {
 			if (options.stillWanted && !options.stillWanted()) throw new SetupNotWantedError();
-			return setup(remote, bundle, {
+			// Read the remote again as it leaves the queue: a Stop Host or Remove Host that ran ahead
+			// of this setup turned its Federation switch off, and the stop must hold.
+			const current = deps.readRemotes().find((candidate) => candidate.id === remoteId);
+			if (!current || current.enabled === false || !isFederationRemote(current)) {
+				throw new SetupRemoteOffError();
+			}
+			return setup(current, bundle, {
 				start: true,
 				// Move to Host's setup keeps the host running across reboots too.
 				service: true,
@@ -89,6 +101,13 @@ export async function setupHostFromDesktop(
 			});
 		});
 	} catch (error) {
+		if (error instanceof SetupRemoteOffError) {
+			return {
+				ok: false,
+				code: SETUP_NOT_WANTED_CODE,
+				error: `Federation was turned off for "${remote.name}" before the setup started. Nothing changed on the remote.`,
+			};
+		}
 		if (error instanceof SetupNotWantedError) {
 			return {
 				ok: false,
