@@ -25,7 +25,11 @@
  */
 
 import type { MainLogLevel } from '../../../shared/logger-types';
-import { wouldScoreText, type GuardGitHubEventParams } from '../cue-susfactor';
+import {
+	noteSusFactorUnconfigured,
+	wouldScoreText,
+	type GuardGitHubEventParams,
+} from '../cue-susfactor';
 import { DEFAULT_CUE_SETTINGS, type CueEvent } from '../cue-types';
 import { captureException } from '../../utils/sentry';
 import { passesFilter } from './cue-trigger-filter';
@@ -103,6 +107,14 @@ export function createCueGuardedEmitter(ctx: CueTriggerSourceContext): CueGuarde
 			const settings = ctx.registry.get(ctx.session.id)?.config.settings;
 			const enabled = settings?.susfactor_enabled !== false;
 			if (!wouldScoreText(enabled, options.scorableText)) {
+				if (enabled && options.scorableText.trim() !== '') {
+					// Enabled, third-party text, no token: say so once, then fail open.
+					noteSusFactorUnconfigured({
+						sessionId: ctx.session.id,
+						subscriptionName: ctx.subscription.name,
+						onLog: (level, message) => ctx.onLog(level as MainLogLevel, message),
+					});
+				}
 				return Promise.resolve(dispatch(event, options));
 			}
 

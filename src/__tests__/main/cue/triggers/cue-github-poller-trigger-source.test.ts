@@ -27,11 +27,14 @@ import { createCueSessionRegistry } from '../../../../main/cue/cue-session-regis
 // test controls. Without this the guard would read ODIN_API_TOKEN from the
 // developer's environment and could make a real network call.
 let susFactorAllows = true;
+// Scoring "would run" by default, so every event goes through the async guard.
+let susFactorConfigured = true;
+const mockNoteSusFactorUnconfigured = vi.fn();
 vi.mock('../../../../main/cue/cue-susfactor', () => ({
 	guardGitHubEvent: vi.fn(async () => susFactorAllows),
 	extractGitHubScorableText: () => 'third-party text',
-	// Scoring "would run", so every event goes through the async guard above.
-	wouldScoreText: () => true,
+	wouldScoreText: () => susFactorConfigured,
+	noteSusFactorUnconfigured: (...a: unknown[]) => mockNoteSusFactorUnconfigured(...a),
 }));
 import type { CueEvent, CueEventType, CueSubscription } from '../../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../../shared/types';
@@ -227,6 +230,34 @@ describe('cue-github-poller-trigger-source', () => {
 		expect(emit).not.toHaveBeenCalled();
 
 		susFactorAllows = true;
+		source.stop();
+	});
+
+	it('emits unscored and raises the unconfigured notice when there is no token', () => {
+		susFactorConfigured = false;
+		const emit = vi.fn();
+		const source = createCueGitHubPollerTriggerSource({
+			session: makeSession(),
+			subscription: makeSub('github.pull_request'),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit,
+		})!;
+
+		source.start();
+		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
+			onEvent: (event: CueEvent, onOutcome?: (outcome: string) => void) => void;
+		};
+		config.onEvent(makeEvent('github.pull_request'));
+
+		// No scoring can run, so the emit is synchronous (fail open).
+		expect(emit).toHaveBeenCalledOnce();
+		expect(mockNoteSusFactorUnconfigured).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1', subscriptionName: expect.any(String) })
+		);
+
+		susFactorConfigured = true;
 		source.stop();
 	});
 
