@@ -401,6 +401,13 @@ describe('gitUtils', () => {
 			expect(parseWorktreePathForBranch(sample, 'main')).toBe('/home/chris/code/repo');
 		});
 
+		it('skips the main worktree when linkedOnly is set (#2189)', () => {
+			expect(parseWorktreePathForBranch(sample, 'main', { linkedOnly: true })).toBeNull();
+			expect(
+				parseWorktreePathForBranch(sample, 'fix/files-panel-polish', { linkedOnly: true })
+			).toBe('/home/chris/code/wt/fix/files-panel-polish');
+		});
+
 		it('returns null when the branch is not found', () => {
 			expect(parseWorktreePathForBranch(sample, 'nope')).toBeNull();
 		});

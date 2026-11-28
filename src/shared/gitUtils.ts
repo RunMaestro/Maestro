@@ -351,14 +351,25 @@ export function isNotAGitRepositoryError(stderr: string | undefined): boolean {
  *
  * Detached worktrees lack a `branch` line and are skipped.
  *
+ * Git always lists the main worktree first. Pass `linkedOnly` to skip it: a
+ * branch checked out in the main repository is not a worktree a caller can
+ * open as a separate checkout, and reusing that path would put a "worktree"
+ * agent in the parent's own checkout (#2189).
+ *
  * @param stdout - Raw stdout from `git worktree list --porcelain`
  * @param branchName - Branch to look up (without refs/heads/ prefix)
+ * @param options.linkedOnly - Ignore the main worktree (the first block)
  * @returns Absolute worktree path, or null if no match
  */
-export function parseWorktreePathForBranch(stdout: string, branchName: string): string | null {
+export function parseWorktreePathForBranch(
+	stdout: string,
+	branchName: string,
+	options: { linkedOnly?: boolean } = {}
+): string | null {
 	if (!stdout || !branchName) return null;
 	const blocks = stdout.split(/\r?\n\r?\n/);
-	for (const block of blocks) {
+	const candidates = options.linkedOnly ? blocks.slice(1) : blocks;
+	for (const block of candidates) {
 		const lines = block.split(/\r?\n/);
 		let wtPath: string | null = null;
 		let branch: string | null = null;

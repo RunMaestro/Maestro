@@ -423,7 +423,9 @@ async function findRemoteWorktreeForBranch(
 		remoteCwd: mainRepoCwd,
 	});
 	if (result.exitCode !== 0) return null;
-	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
+	const existingPath = parseWorktreePathForBranch(result.stdout, branchName, {
+		linkedOnly: true,
+	});
 	if (!existingPath) return null;
 	const existsResult = await execRemoteShellCommand(
 		`test -d '${existingPath}' && echo EXISTS || echo MISSING`,
