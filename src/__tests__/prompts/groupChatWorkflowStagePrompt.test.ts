@@ -7,7 +7,8 @@ import path from 'path';
 import { describe, expect, test } from 'vitest';
 
 const PROMPT_PATH = path.join(__dirname, '../../prompts/group-chat-workflow-stage.md');
-const prompt = readFileSync(PROMPT_PATH, 'utf-8');
+// A Windows checkout may hold the prompt with CRLF line endings.
+const prompt = readFileSync(PROMPT_PATH, 'utf-8').replace(/\r\n/g, '\n');
 
 describe('group-chat-workflow-stage.md', () => {
 	test('keeps delegation scoped to the current stage roster and mode', () => {

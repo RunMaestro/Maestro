@@ -11,7 +11,8 @@ import {
 } from '../../shared/maestro-lib/groupchat/workflow/plan';
 
 const PROMPT_PATH = path.join(__dirname, '../../prompts/group-chat-workflow-planning.md');
-const prompt = readFileSync(PROMPT_PATH, 'utf-8');
+// A Windows checkout may hold the prompt with CRLF line endings.
+const prompt = readFileSync(PROMPT_PATH, 'utf-8').replace(/\r\n/g, '\n');
 
 describe('group-chat-workflow-planning.md', () => {
 	test('keeps plan output ordered and approval-gated', () => {
