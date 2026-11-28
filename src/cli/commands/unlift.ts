@@ -18,8 +18,10 @@ import {
 	runReturnFromHost,
 	withReturnedFromHost,
 	type ReturnedFromHost,
+	type ReturnResult,
 	type ReturnRunDeps,
 } from '../../shared/maestro-lib/agents/lift-return';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import {
 	readSessionsStoreFile,
@@ -130,6 +132,19 @@ function sharedDeps(deps: UnliftDeps): ReturnRunDeps {
 	};
 }
 
+/** The code, exit code, and message `unlift` reports for a failed return. */
+function failureOf(error: unknown): { code: string; exitCode: number; message: string } {
+	const code =
+		error instanceof LiftRunError
+			? error.code
+			: error instanceof PeerResolveError
+				? peerErrorCode(error.code)
+				: 'RETURN_FAILED';
+	const exitCode = error instanceof PeerResolveError ? error.exitCode : ExitCode.GeneralError;
+	const message = error instanceof Error ? error.message : String(error);
+	return { code, exitCode, message };
+}
+
 /** `maestro-cli unlift <agent>`. */
 export async function unlift(
 	agentRef: string,
@@ -154,17 +169,66 @@ export async function unlift(
 			)
 		);
 	} catch (error) {
-		const code =
-			error instanceof LiftRunError
-				? error.code
-				: error instanceof PeerResolveError
-					? peerErrorCode(error.code)
-					: 'RETURN_FAILED';
-		const exitCode = error instanceof PeerResolveError ? error.exitCode : ExitCode.GeneralError;
-		const message = error instanceof Error ? error.message : String(error);
+		const { code, exitCode, message } = failureOf(error);
 		if (options.json)
 			console.log(JSON.stringify({ success: false, error: message, code }, null, 2));
 		else console.error(formatError(message));
 		process.exitCode = exitCode;
+	}
+}
+
+/** One agent's outcome in `unlift --all`. */
+export type UnliftAllOutcome =
+	| ({ ok: true } & ReturnResult)
+	| { ok: false; agent: { id: string; name: string }; code: string; error: string };
+
+/**
+ * `maestro-cli unlift --all`: move every agent that is on a host back, one at a time (one SSH
+ * connection at a time), and report each one. Each return reaches its host; one whose host does
+ * not answer stays moved and is reported, unless --offline, which restores every agent from this
+ * machine's copy without dialing.
+ */
+export async function unliftAll(
+	options: UnliftOptions,
+	overrides: Partial<UnliftDeps> = {}
+): Promise<void> {
+	const deps = { ...defaultDeps, ...overrides };
+	const moved = deps.readAgents().filter((agent) => readLiftedTo(agent.liftedTo));
+	const outcomes: UnliftAllOutcome[] = [];
+	for (const agent of moved) {
+		try {
+			const result = await runReturnFromHost(
+				agent.id,
+				{ offline: options.offline === true, keepHostCopy: options.keepHostCopy === true },
+				// The id is already resolved: a name two agents share must not pick the wrong one.
+				{ ...sharedDeps(deps), resolveAgentId: (id) => id }
+			);
+			outcomes.push({ ok: true, ...result });
+		} catch (error) {
+			const { code, message } = failureOf(error);
+			outcomes.push({ ok: false, agent: { id: agent.id, name: agent.name }, code, error: message });
+		}
+	}
+	const failed = outcomes.filter((outcome) => !outcome.ok).length;
+	if (failed > 0) process.exitCode = ExitCode.GeneralError;
+	if (options.json) {
+		console.log(JSON.stringify({ success: failed === 0, agents: outcomes }, null, 2));
+		return;
+	}
+	if (outcomes.length === 0) {
+		console.log(formatSuccess('No agent is on a host: nothing to move back'));
+		return;
+	}
+	for (const outcome of outcomes) {
+		if (!outcome.ok) {
+			console.error(formatError(`"${outcome.agent.name}" is still on its host: ${outcome.error}`));
+			continue;
+		}
+		for (const notice of outcome.notices ?? []) console.log(formatWarning(notice));
+		console.log(
+			formatSuccess(
+				`"${outcome.agent.name}" is an SSH agent again (${outcome.tabs} tab(s) back from ${outcome.from}${outcome.hostCopyRemoved ? ', host copy removed' : ''})`
+			)
+		);
 	}
 }

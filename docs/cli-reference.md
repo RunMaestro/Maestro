@@ -1793,15 +1793,16 @@ Move an SSH remote agent, with its tabs, transcripts, provider sessions and queu
 | `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
 | `--json`     | Output as JSON (for scripting)                         | -       |
 
-## `maestro-cli unlift <agent>`
+## `maestro-cli unlift [agent]`
 
 Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone
 
-| Option             | Description                                                  | Default |
-| ------------------ | ------------------------------------------------------------ | ------- |
-| `--offline`        | Do not reach the host: restore from this machine's copy only | -       |
-| `--keep-host-copy` | Leave the agent on the host too (it then has two owners)     | -       |
-| `--json`           | Output as JSON (for scripting)                               | -       |
+| Option             | Description                                                                 | Default |
+| ------------------ | --------------------------------------------------------------------------- | ------- |
+| `--all`            | Move every agent that is on a host back, one at a time, and report each one | -       |
+| `--offline`        | Do not reach the host: restore from this machine's copy only                | -       |
+| `--keep-host-copy` | Leave the agent on the host too (it then has two owners)                    | -       |
+| `--json`           | Output as JSON (for scripting)                                              | -       |
 
 ## `maestro-cli federation`
 

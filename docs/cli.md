@@ -2565,12 +2565,15 @@ The desktop app runs the same lift. Right-click the agent in the Left Bar and ch
 
 When the host cannot be reached, `--offline` moves the agent back with only what this machine kept. Conversations started on the host stay there, and its copy is not removed: remove it on the host when it is back (`maestro-cli remove-agent <id>`).
 
+`maestro-cli unlift --all` moves every agent that is on a host back, one at a time, and reports each one. An agent whose host does not answer stays on its host and is reported; the others still come back. With `--offline`, every agent comes back from this machine's copy without reaching any host.
+
 ```bash
 maestro-cli unlift docs
 maestro-cli unlift docs --offline --json
+maestro-cli unlift --all --json
 ```
 
-The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. When the host cannot be reached, it offers to move the agent back offline.
+The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. It is offered for every agent on a host, whether hosted agents are on or off. When the host cannot be reached, it offers to move the agent back offline.
 
 ### One Host Per Data Directory
 

@@ -42,7 +42,7 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import { useAgentFederationStatus } from '../../hooks/federation/useAgentLift';
+import { useAgentFederationStatus, useMoveBackTarget } from '../../hooks/federation/useAgentLift';
 import { canMoveToHost } from '../../utils/peerMirrorView';
 import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 
@@ -238,7 +238,8 @@ export function SessionContextMenu({
 	// are the only Federation rows: the host connection (reconnect, start the host) lives in the
 	// hosted view's disconnected banner and the palette.
 	const federationStatus = useAgentFederationStatus(session);
-	const hosted = federationStatus.kind === 'moved' ? federationStatus : undefined;
+	// Move Back is offered for every moved agent, whatever the hosted-agents setting says.
+	const hosted = useMoveBackTarget(session);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -434,16 +435,16 @@ export function SessionContextMenu({
 				<button
 					type="button"
 					onClick={() => {
-						requestMoveBackFromHost(session.id, session.name, hosted.peer?.name ?? hosted.peerId);
+						requestMoveBackFromHost(session.id, session.name, hosted.peerName);
 						onDismiss();
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
-					title={`Make it an SSH agent again: its conversations on ${hosted.peer?.name ?? hosted.peerId} come back here, and automatic moves leave it alone`}
+					title={`Make it an SSH agent again: its conversations on ${hosted.peerName} come back here, and automatic moves leave it alone`}
 					data-testid="session-menu-move-back-from-host"
 				>
 					<Undo2 className="w-3.5 h-3.5" />
-					Move Back from Host ({hosted.peer?.name ?? hosted.peerId})...
+					Move Back from Host ({hosted.peerName})...
 				</button>
 			)}
 

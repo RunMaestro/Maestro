@@ -505,11 +505,19 @@ describe('SessionContextMenu', () => {
 			useSettingsStore.setState({ federationHostedAgents: false });
 		});
 
-		it('offers no Move Back for a hosted agent while hosting was never switched on', () => {
-			mirror();
-			useSettingsStore.setState({ federationHostedAgents: undefined as unknown as boolean });
-			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
-			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
+		it('offers Move Back for a moved agent with hosting off and no mirror running', () => {
+			for (const hosting of [false, undefined as unknown as boolean]) {
+				useSettingsStore.setState({ federationHostedAgents: hosting });
+				renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+				// No mirror: the peer id names the host.
+				const item = screen.getByTestId('session-menu-move-back-from-host');
+				expect(item).toHaveTextContent('Move Back from Host (box)...');
+				fireEvent.click(item);
+				expect(requestMoveBackFromHost).toHaveBeenLastCalledWith('session-1', 'Test Agent', 'box');
+				// It stays a moved agent: no Move to Host beside it.
+				expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+				cleanup();
+			}
 		});
 
 		it('offers nothing before the mirror knows the remote (opted out, or not loaded yet)', () => {
