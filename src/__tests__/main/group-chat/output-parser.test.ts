@@ -252,3 +252,10 @@ describe('group-chat/output-parser', () => {
 		});
 	});
 });
+
+describe('normalized group responses', () => {
+	it('preserves a completed JSON answer instead of decoding it as transport JSON', () => {
+		const answer = '{"type":"report","results":[1,2],"final":"DONE"}';
+		expect(extractTextFromStreamJson(answer, 'opencode', true)).toBe(answer);
+	});
+});
