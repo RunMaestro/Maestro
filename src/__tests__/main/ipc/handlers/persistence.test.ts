@@ -7373,6 +7373,41 @@ describe('persistence IPC handlers', () => {
 			}
 		);
 
+		it('a refused save takes back only its own records: an edit another writer made during the flush stays (#2199)', async () => {
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, name: 'Before' },
+				{ ...baseSession, id: 's2', name: 'Other' },
+				{ ...baseSession, id: 's3', name: 'Closed by this save' },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockImplementationOnce(async () => {
+				// A plugin action writes the store directly, outside the save queue.
+				stored = stored.map((s) => (s.id === 's2' ? { ...s, name: 'Renamed by plugin' } : s));
+				throw Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' });
+			});
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler(
+					{} as any,
+					[
+						{ ...baseSession, name: 'Refused' },
+						{ ...baseSession, id: 's4', name: 'New' },
+					],
+					['s3']
+				)
+			).toBe(false);
+			expect(stored).toEqual([
+				expect.objectContaining({ id: 's1', name: 'Before' }),
+				expect.objectContaining({ id: 's2', name: 'Renamed by plugin' }),
+				expect.objectContaining({ id: 's3', name: 'Closed by this save' }),
+			]);
+		});
+
 		it('does not acknowledge an unexpected deferred write failure', async () => {
 			const error = new Error('EIO: input/output error') as NodeJS.ErrnoException;
 			error.code = 'EIO';
