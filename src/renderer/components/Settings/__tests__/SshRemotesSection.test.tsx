@@ -9,7 +9,16 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
-vi.mock('../SshRemoteModal', () => ({ SshRemoteModal: () => null }));
+// The editor renders nothing; its last props are kept, so a test can save through it.
+const modalProps: {
+	current?: { isOpen: boolean; onSave: (config: Partial<SshRemoteConfig>) => Promise<unknown> };
+} = {};
+vi.mock('../SshRemoteModal', () => ({
+	SshRemoteModal: (props: NonNullable<typeof modalProps.current>) => {
+		modalProps.current = props;
+		return null;
+	},
+}));
 
 // The confirmation as plain markup: what it says, and its two buttons.
 vi.mock('../../ConfirmModal', () => ({
@@ -54,13 +63,14 @@ const configs: SshRemoteConfig[] = [
 ];
 
 const refresh = vi.fn(async () => {});
+const saveConfig = vi.fn(async (_config: Partial<SshRemoteConfig>) => ({ success: true }));
 vi.mock('../../../hooks', () => ({
 	useSshRemotes: () => ({
 		configs,
 		defaultId: '1',
 		loading: false,
 		error: null,
-		saveConfig: vi.fn(),
+		saveConfig: (config: Partial<SshRemoteConfig>) => saveConfig(config),
 		deleteConfig: vi.fn(),
 		setDefaultId: vi.fn(),
 		testConnection: vi.fn(),
@@ -252,6 +262,38 @@ describe('Stop Host and Remove Host', () => {
 			)
 		);
 		expect(refresh).toHaveBeenCalled();
+	});
+
+	it('keeps Federation off when an editor opened before the stop saves the value it opened with', async () => {
+		stopRemoteHostFromWindow.mockResolvedValue({
+			ok: true,
+			outcome: 'done',
+			message: 'The host on NeeMAC is stopped.',
+			federationOff: true,
+		});
+		saveConfig.mockClear();
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('NeeMAC')).getByTitle('Edit'));
+		fireEvent.click(within(rowOf('NeeMAC')).getByLabelText('Stop Host'));
+		fireEvent.click(
+			within(screen.getByRole('dialog', { name: 'Stop Host' })).getByText('Stop Host')
+		);
+		await waitFor(() => expect(screen.getByTestId('ssh-remote-host-result')).toBeInTheDocument());
+		// The editor still holds Federation on, as it was opened: its save must not switch it back.
+		await modalProps.current!.onSave({ ...configs[1], federation: undefined });
+		expect(saveConfig).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: '2', federation: false })
+		);
+	});
+
+	it('saves Federation as edited when no stop ran while the editor was open', async () => {
+		saveConfig.mockClear();
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('NeeMAC')).getByTitle('Edit'));
+		await modalProps.current!.onSave({ ...configs[1], federation: undefined });
+		expect(saveConfig).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: '2', federation: undefined })
+		);
 	});
 
 	it('shows a failure on the row', async () => {

@@ -53,6 +53,10 @@ export function setAutoFederation(next: AutoFederationCoordinator | null): void 
 	autoFederation = next;
 }
 
+// The come-home job's holder lives beside the job, so the spawn refusal can read it without this
+// module's imports.
+export { getComeHomeRunner, setComeHomeRunner } from './come-home';
+
 /**
  * What automatic Federation reports: the coordinator's snapshot, or, while it does not run (hosted
  * agents off), the idle one: nothing seen and no automatic moves in effect. The IPC and the CLI

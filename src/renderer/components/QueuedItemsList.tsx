@@ -114,6 +114,8 @@ interface QueuedItemsListProps {
 	// Reuses the same lightbox as history/staged images; pass 'history' source so
 	// the images are read-only (navigable, no delete).
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
+	// Why every item waits, shown under the separator (an agent still moved onto a host).
+	waitingNote?: string;
 }
 
 /**
@@ -143,6 +145,7 @@ export const QueuedItemsList = memo(
 		getForceSendContext,
 		shortcutEnabled = true,
 		onOpenLightbox,
+		waitingNote,
 	}: QueuedItemsListProps) => {
 		// Filter to only show items for the active tab if activeTabId is provided
 		const filteredQueue = activeTabId
@@ -333,6 +336,15 @@ export const QueuedItemsList = memo(
 					</span>
 					<div className="flex-1 h-px" style={{ backgroundColor: theme.colors.border }} />
 				</div>
+				{waitingNote && (
+					<div
+						className="mx-6 mb-2 text-xs select-text"
+						style={{ color: theme.colors.textDim }}
+						data-testid="queued-waiting-note"
+					>
+						{waitingNote}
+					</div>
+				)}
 
 				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
 				<div className={`mx-6 ${QUEUE_PROSE_SCOPE}`}>

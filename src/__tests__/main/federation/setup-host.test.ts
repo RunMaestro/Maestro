@@ -132,6 +132,24 @@ describe('setupHostFromDesktop', () => {
 		).toMatchObject({ ok: true });
 	});
 
+	it('reads the remote again when it leaves the queue: a Stop Host ahead of it holds', async () => {
+		let remotes: SshRemoteConfig[] = [remote];
+		const { deps, setup, service } = depsWith({ readRemotes: () => remotes });
+		// The stop ahead in the queue turns the remote's Federation off before this task runs.
+		(service.exclusive as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			async <T>(task: () => Promise<T>) => {
+				remotes = [{ ...remote, federation: false }];
+				return task();
+			}
+		);
+		expect(await setupHostFromDesktop('r1', {}, deps)).toMatchObject({
+			ok: false,
+			code: SETUP_NOT_WANTED_CODE,
+		});
+		expect(setup).not.toHaveBeenCalled();
+		expect(service.reconnectRemote).not.toHaveBeenCalled();
+	});
+
 	it('answers an installer refusal with its own code and message, and reloads nothing', async () => {
 		const { deps, service } = depsWith({
 			setup: vi.fn(async () => {

@@ -192,14 +192,13 @@ describe('maestro-cli remote-host', () => {
 			expect(json()).toMatchObject({ running: true });
 		});
 
-		it('refuses a remote that opted out, names the fix, and never dials it', async () => {
-			const deps = depsWith([running()], undefined, [remoteOf({ federation: false })]);
+		it('reads a remote that opted out: it is how a person checks a stop, which turns Federation off', async () => {
+			const deps = depsWith([notRunning], undefined, [remoteOf({ federation: false })]);
 			await remoteHostStatus('r1', { json: true }, LOCAL, deps);
-			expect(deps.discover).not.toHaveBeenCalled();
-			expect(String(json().error)).toContain(
-				'maestro-cli update-ssh-remote r1-abcdef --federation on'
-			);
-			expect(process.exitCode).toBe(ExitCode.GeneralError);
+			expect(deps.discover).toHaveBeenCalledTimes(1);
+			expect(deps.survey).toHaveBeenCalledTimes(1);
+			expect(json()).toMatchObject({ running: false, service: { kind: 'none' } });
+			expect(deps.writeRemotes).not.toHaveBeenCalled();
 		});
 
 		it('refuses an unknown remote as bad usage', async () => {
@@ -671,6 +670,28 @@ describe('maestro-cli remote-host', () => {
 			);
 			await remoteHostUninstall('r1', { purgeData: true }, deps);
 			expect(everything()).toContain('an agent appeared');
+			// Not the success asked for: no success banner, and the report goes to stderr.
+			expect(out.join('\n')).not.toContain("Maestro's host is removed");
+			expect(err.join('\n')).toContain('an agent appeared');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('turns Federation off when the stop failed part way after the host stopped', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockRejectedValue(
+				new RemoteHostStopError('remove', 'A file could not be removed.', {
+					hostStopped: true,
+					serviceDisabled: true,
+					removed: ['/home/p/.maestro/cli'],
+				})
+			);
+			await remoteHostUninstall('r1', { json: true }, deps);
+			expect(json()).toMatchObject({
+				code: 'remove',
+				progress: { hostStopped: true, serviceDisabled: true },
+				federationOff: true,
+			});
+			expect(deps.writeRemotes).toHaveBeenCalledWith([remoteOf({ federation: false })]);
 			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 

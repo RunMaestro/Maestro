@@ -14,6 +14,7 @@
 import { logger } from '../../../utils/logger';
 import {
 	autoFederationSnapshot,
+	getComeHomeRunner,
 	getPeerMirrorService,
 	runAutoFederationNow,
 } from '../../../federation';
@@ -58,10 +59,11 @@ export async function handleFederationCommand(
 		// Automatic Federation answers whether or not it runs: while hosted agents are off, the
 		// idle snapshot, exactly as the desktop's Settings shows it. Nothing dials.
 		if (action === 'auto-status' || action === 'auto-run') {
-			reply({
-				success: true,
-				auto: action === 'auto-run' ? await runAutoFederationNow() : autoFederationSnapshot(),
-			});
+			const snapshot =
+				action === 'auto-run' ? await runAutoFederationNow() : autoFederationSnapshot();
+			// It also reports what the job that brought moved agents home did this launch.
+			const comeHome = getComeHomeRunner()?.lastReport() ?? undefined;
+			reply({ success: true, auto: comeHome ? { ...snapshot, comeHome } : snapshot });
 			return;
 		}
 

@@ -743,13 +743,15 @@ class WsMaestroClient implements MaestroClient {
 		conn: BridgeConnection,
 		method: ClientMethod,
 		channel: string,
-		args: unknown[] = []
+		args: unknown[] = [],
+		options: { timeoutMs?: number } = {}
 	): Promise<ClientResult<T>> {
 		const sent = await this.sendOn<Reply>(
 			conn,
 			method,
 			{ type: 'bridge.invoke', channel, args },
-			'bridge.response'
+			'bridge.response',
+			options
 		);
 		if (!sent.ok) return sent;
 		const reply = sent.value;
@@ -777,7 +779,8 @@ class WsMaestroClient implements MaestroClient {
 	private invoke<T = unknown>(
 		method: ClientMethod,
 		channel: string,
-		args: unknown[] = []
+		args: unknown[] = [],
+		options: { timeoutMs?: number } = {}
 	): Promise<ClientResult<T>> {
 		const gate = this.requireConnected(method);
 		if (gate || !this.conn) {
@@ -785,7 +788,7 @@ class WsMaestroClient implements MaestroClient {
 				gate ?? this.fail(method, 'host-unavailable', 'Not connected to a Maestro desktop.')
 			);
 		}
-		return this.invokeOn<T>(this.conn, method, channel, args);
+		return this.invokeOn<T>(this.conn, method, channel, args, options);
 	}
 
 	/**
@@ -2077,7 +2080,8 @@ class WsMaestroClient implements MaestroClient {
 		const read = await this.invoke<{ logs?: unknown[] }>(
 			'tabs.transcript',
 			'sessions:getDeferredContent',
-			[agentId, tabId, false]
+			[agentId, tabId, false],
+			options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}
 		);
 		if (!read.ok) return read;
 		return ok(sliceTranscript(transcriptOf({ id: tabId, logs: read.value?.logs ?? [] }), options));

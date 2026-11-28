@@ -25,11 +25,13 @@ import {
 	runAutoFederationNow,
 	onMirrorPush,
 	setAutoFederation,
+	setComeHomeRunner,
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
 import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
 import { feedHostedTurnToDispatchCallbacks } from '../../dispatch-callbacks/hosted-turn-feed';
+import { createComeHomeRunner, type ComeHomeReport } from '../../federation/come-home';
 import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
 import { followHostingSetting, type HostingSetting } from '../../federation/hosting-gate';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
@@ -59,6 +61,7 @@ import type {
 } from '../../federation/peer-mirror-service';
 import {
 	buildDesktopLiftDeps,
+	holdHostConnections,
 	liftAgentFromDesktop,
 	returnAgentFromDesktop,
 	type DesktopLiftAnswer,
@@ -92,7 +95,10 @@ import type { HistoryGraphData } from '../../utils/history-bucket-builder';
 export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	/** The `federationAutoMove` setting (off by default; on only once the person opts in). */
 	readAutoMove(): boolean;
-	/** The hosted agents setting: the coordinator runs only while it is on. */
+	/**
+	 * The hosted agents setting: the coordinator runs only while it is on. Off, every moved agent
+	 * comes home (`federation:comeHome`).
+	 */
 	hosting: HostingSetting;
 	/** Call `onChange` when the stored agents change. Returns the unsubscribe. */
 	watchSessions?(onChange: () => void): () => void;
@@ -413,6 +419,29 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			async (agentId: unknown, options?: unknown): Promise<DesktopLiftAnswer> =>
 				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
 		)
+	);
+	// Every moved agent comes home (hosting off): the window calls this once its agent list is
+	// loaded, because each restore is written by that window. One run at a time. Starts no
+	// mirror and no coordinator: it opens its own connection per remote, held while it polls a turn
+	// running on the host, and released when it is done with that remote's agent.
+	const comeHomeConnections = holdHostConnections(async (remoteId, peer) => {
+		if (!liftDeps.connectHost) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+		return liftDeps.connectHost(remoteId, peer);
+	});
+	const comeHomeLiftDeps = { ...liftDeps, connectHost: comeHomeConnections.connectHost };
+	const comeHome = createComeHomeRunner({
+		readAgents: liftDeps.readAgents,
+		readRemotes: liftDeps.readRemotes,
+		hostingEnabled: () => deps.hosting.isOn(),
+		returnAgent: (agentId, options) => returnAgentFromDesktop(agentId, options, comeHomeLiftDeps),
+		releaseConnection: comeHomeConnections.release,
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		now: () => Date.now(),
+	});
+	setComeHomeRunner(comeHome);
+	ipcMain.handle(
+		'federation:comeHome',
+		withIpcErrorLogging(opts('comeHome'), async (): Promise<ComeHomeReport> => comeHome.run())
 	);
 	// Move Back from Host: the reverse of `federation:lift` (`maestro-cli unlift`).
 	ipcMain.handle(

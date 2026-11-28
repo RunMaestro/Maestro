@@ -24,6 +24,7 @@ import {
 	getTabDisplayName as libGetTabDisplayName,
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
+import { readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import { DEFAULT_TAB_DEFAULTS, turnEntryIdFor } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
@@ -884,7 +885,21 @@ export function resolveQueuedItemTarget(
 }
 
 /**
- * True when the tab a queued item would run on is already mid-turn.
+ * True while hosting is off and the agent still points at a Federation host (`liftedTo`). Its
+ * local queue holds: a turn spawned here would resume the provider session the host owns. The
+ * come-home job (`src/main/federation/come-home.ts`) clears the pointer, and the queue drains then.
+ * With hosting on, nothing is held: sends go to the host (`hostedTargetOf()`) as before. Same
+ * reading of the setting as `hostingEnabled()` in `services/hostedTurns.ts` (not imported: that
+ * module imports this one).
+ */
+export function isAwaitingComeHome(session: Pick<Session, 'liftedTo'>): boolean {
+	if (useSettingsStore.getState().federationHostedAgents === true) return false;
+	return readLiftedTo(session.liftedTo) !== undefined;
+}
+
+/**
+ * True when the tab a queued item would run on is already mid-turn, or the agent is still moved
+ * onto a host ({@link isAwaitingComeHome}).
  *
  * The agent process is keyed per tab (`${sessionId}-ai-${tabId}`), so an agent can
  * read idle - or a parallel `-batch-` Auto Run task can exit - while that exact tab
@@ -899,6 +914,7 @@ export function resolveQueuedItemTarget(
  * item must not overtake it (U1).
  */
 export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
+	if (isAwaitingComeHome(session)) return true;
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return false;
 	if (hostedTabHoldsLine(session.id, target.tabId)) return true;

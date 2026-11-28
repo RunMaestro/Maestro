@@ -69,6 +69,8 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: (session: Session) =>
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
+	// A queued message's come-home note: no agent here is moved onto a host.
+	isAwaitingComeHome: () => false,
 }));
 
 // Mock MutationObserver for JSDOM - store callback on observe() so tests

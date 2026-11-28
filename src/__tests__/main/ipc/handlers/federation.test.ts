@@ -56,6 +56,10 @@ const liftableAgent: AgentRecord = {
 	aiTabs: [{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1', logs: [] }],
 };
 const mainWindow = { webContents: {} };
+/** What `readSessions` answers; a test may swap in moved agents. */
+let sessions: AgentRecord[] = [liftableAgent];
+let remotes: Array<Record<string, unknown>> = [];
+let hostingOn = true;
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
@@ -116,16 +120,17 @@ describe('federation IPC handlers', () => {
 		);
 		setPeerMirrorServiceForTests(null);
 		requestFromRenderer.mockReset();
+		sessions = [liftableAgent];
+		remotes = [{ id: 'remote-1', name: 'build-box', enabled: true, federation: true }];
+		hostingOn = true;
 		registerFederationHandlers({
-			readSessions: () => [liftableAgent],
-			readSshRemotes: () => [
-				{ id: 'remote-1', name: 'build-box', enabled: true, federation: true },
-			],
+			readSessions: () => sessions,
+			readSshRemotes: () => remotes,
 			readAgentConfigs: () => ({}),
 			getMainWindow: () => mainWindow as never,
 			getProcessManager: () => null,
 			readAutoMove: () => true,
-			hosting: { isOn: () => true, watch: () => () => undefined },
+			hosting: { isOn: () => hostingOn, watch: () => () => undefined },
 		});
 	});
 
@@ -134,6 +139,7 @@ describe('federation IPC handlers', () => {
 			'federation:act',
 			'federation:autoRun',
 			'federation:autoStatus',
+			'federation:comeHome',
 			'federation:historyDelete',
 			'federation:historyGraph',
 			'federation:historyOffset',
@@ -159,6 +165,43 @@ describe('federation IPC handlers', () => {
 		expect(status).toMatchObject({ autoMove: true, running: false });
 		const ran = (await call('federation:autoRun')) as { lastPassAt?: number };
 		expect(typeof ran.lastPassAt).toBe('number');
+	});
+
+	describe('federation:comeHome (hosting off)', () => {
+		beforeEach(() => {
+			hostingOn = false;
+		});
+
+		it('with no moved agent, reports nothing and asks the window nothing', async () => {
+			const report = (await call('federation:comeHome')) as { agents: unknown[] };
+			expect(report.agents).toEqual([]);
+			expect(requestFromRenderer).not.toHaveBeenCalled();
+		});
+
+		it('brings an agent on an opted-out remote home offline, without dialing, and names why', async () => {
+			remotes = [{ id: 'remote-1', name: 'build-box', enabled: true, federation: false }];
+			sessions = [
+				{ ...liftableAgent, liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } },
+			] as AgentRecord[];
+			requestFromRenderer.mockImplementation(async () => {
+				sessions = [liftableAgent];
+				return { success: true };
+			});
+			const first = call('federation:comeHome');
+			// Single flight: a second call joins the run in flight.
+			const second = call('federation:comeHome');
+			const [report, joined] = (await Promise.all([first, second])) as Array<{
+				agents: Array<{ result: string; notices: string[] }>;
+			}>;
+			expect(joined).toBe(report);
+			expect(report.agents).toHaveLength(1);
+			expect(report.agents[0].result).toBe('offline');
+			expect(report.agents[0].notices.join(' ')).toContain('opted out of Federation');
+			expect(requestFromRenderer).toHaveBeenCalledTimes(1);
+			expect(requestFromRenderer.mock.calls[0][2]).toMatchObject({
+				args: ['agent-1', { returnedFromHost: { tabs: [] } }],
+			});
+		});
 	});
 
 	it('with hosted agents off, builds no coordinator and answers the idle snapshot', async () => {

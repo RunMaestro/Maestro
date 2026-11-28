@@ -78,6 +78,7 @@ import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
+import type { HostCopyLeft } from '../../shared/maestro-lib/agents/lift-return-record';
 import type { DesignPickKind } from '../../shared/designPickCommands';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -1789,6 +1790,9 @@ export interface Session {
 	// Federation, on a host: the id of the agent this record was lifted from. A later Move to Host
 	// of that agent may replace this record (`planAgentImport()`).
 	liftedFromAgentId?: string;
+	// Federation: home again, but the copy on its host was not removed yet (a crash, a lost link,
+	// or an offline return). The come-home job removes it at the next launch (readHostCopyLeft()).
+	hostCopyLeft?: HostCopyLeft;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents

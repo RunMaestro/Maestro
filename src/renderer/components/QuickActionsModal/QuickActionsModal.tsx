@@ -104,6 +104,7 @@ import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agent
 import {
 	useAgentFederationStatus,
 	useAddableHostedAgentCount,
+	useMoveBackTarget,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
@@ -595,6 +596,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const federationStatus = useAgentFederationStatus(activeSession);
+	const moveBackTarget = useMoveBackTarget(activeSession);
 	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const hasHostedAgents = sessions.some((session) => !!session.liftedTo);
 	const addableHostedAgentCount = useAddableHostedAgentCount();
@@ -615,12 +617,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveToHost,
+		// Offered for every moved agent, whatever the hosted-agents setting says.
 		moveBackFromHost:
-			activeSession && federationStatus.kind === 'moved'
+			activeSession && moveBackTarget
 				? {
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
-						peerName: federationStatus.peer?.name ?? federationStatus.peerId,
+						peerName: moveBackTarget.peerName,
 					}
 				: undefined,
 		requestMoveBackFromHost,

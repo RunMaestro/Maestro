@@ -777,6 +777,36 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue[0].querySource).toBe('user');
 		});
 
+		it('queues a command to an agent still moved onto a host, unpaused, and runs nothing', async () => {
+			vi.useFakeTimers();
+			const moved = createMockSession({
+				state: 'idle',
+				executionQueue: [],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			});
+			const deps = createDeps({
+				activeSession: moved,
+				inputValue: '/commit',
+				customAICommands: customCommands,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const [updated] = setSessionsCall([moved]);
+			expect(updated.executionQueue).toHaveLength(1);
+			expect(updated.executionQueue[0]).toMatchObject({ type: 'command', command: '/commit' });
+			expect(updated.executionQueue[0].paused).toBeUndefined();
+			vi.useRealTimers();
+		});
+
 		describe('forced parallel for slash commands', () => {
 			afterEach(() => {
 				useSettingsStore.setState({ forcedParallelExecution: false } as any);
@@ -3099,6 +3129,29 @@ describe('useInputProcessing', () => {
 			const first = takeNextRunnableQueueItem(released);
 			const second = takeNextRunnableQueueItem(first.remaining);
 			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('holds a send to an agent still moved onto a host in the queue, and spawns nothing', async () => {
+			// Hosting is off, so hostedTargetOf() answers nothing; the agent is on its way home.
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'run once I am home',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['run once I am home']);
 		});
 
 		it('keeps queue order when reconciliation releases the hold during a new send', async () => {

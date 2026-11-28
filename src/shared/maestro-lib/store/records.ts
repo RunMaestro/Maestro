@@ -156,6 +156,8 @@ export interface AgentRecord extends UnknownFields {
 	 * (`AgentImportInput.liftedFromAgentId`). A later lift of that agent may replace this record.
 	 */
 	liftedFromAgentId?: string;
+	/** Federation: home again, with a host copy still to remove. Read it through `readHostCopyLeft()`. */
+	hostCopyLeft?: import('../agents/lift-return-record').HostCopyLeft;
 }
 
 /** One Left Bar group, mirroring `Group` in `src/shared/types.ts`. */
