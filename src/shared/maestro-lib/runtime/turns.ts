@@ -269,6 +269,10 @@ function toQueuedTurn(item: TurnItem, handOver: HandOver | undefined): QueuedTur
 		// The images ride along, so a hosted card draws them as a local card does. The item holds
 		// store refs, which name this machine's disk: the client gets the bytes (M10).
 		...(item.images?.length ? inlineQueuedImages(item.images) : {}),
+		readOnly: item.readOnly === true,
+		...(item.overrides?.saveToHistory !== undefined
+			? { saveToHistory: item.overrides.saveToHistory }
+			: {}),
 	};
 }
 

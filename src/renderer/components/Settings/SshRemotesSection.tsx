@@ -148,6 +148,9 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	// Remotes whose Federation switch a Stop Host or Remove Host turned off while the editor held
 	// the earlier value: a save that leaves the switch as it was opened keeps it off.
 	const federationOffSinceEdit = useRef(new Set<string>());
+	// Stop Host / Remove Host calls still running, by remote: a save waits for its remote's, so it
+	// cannot write the Federation switch back on under the stop's own write in main.
+	const hostActionsInFlight = useRef(new Map<string, Promise<unknown>>());
 
 	const sortedConfigs = useMemo(() => sortSshRemotes(configs), [configs]);
 	const visibleConfigs = useMemo(
@@ -164,7 +167,9 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 
 	// Handle edit existing remote
 	const handleEdit = (config: SshRemoteConfig) => {
-		federationOffSinceEdit.current.delete(config.id);
+		// A list not reloaded yet since a stop still shows the switch on: the note stays, so saving
+		// what the editor opened with keeps it off.
+		if (!isFederationRemote(config)) federationOffSinceEdit.current.delete(config.id);
 		setEditingConfig(config);
 		setShowModal(true);
 	};
@@ -210,9 +215,20 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	// naming them, before it stops anyway.
 	const runHostAction = async (config: SshRemoteConfig, action: HostAction, force: boolean) => {
 		setHostBusy((prev) => ({ ...prev, [config.id]: action }));
-		const answer = await stopRemoteHostFromWindow(config.id, {
+		// Main switched the remote's Federation off: noted before a waiting save reads it, so an
+		// editor opened before the stop cannot switch it back on with the value it was opened with.
+		const pending = stopRemoteHostFromWindow(config.id, {
 			uninstall: action === 'remove',
 			force,
+		}).then((answer) => {
+			if (answer.federationOff) federationOffSinceEdit.current.add(config.id);
+			return answer;
+		});
+		hostActionsInFlight.current.set(config.id, pending);
+		const answer = await pending.finally(() => {
+			if (hostActionsInFlight.current.get(config.id) === pending) {
+				hostActionsInFlight.current.delete(config.id);
+			}
 		});
 		setHostBusy((prev) => {
 			const { [config.id]: _, ...rest } = prev;
@@ -232,12 +248,8 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			});
 			return;
 		}
-		// Main switched the remote's Federation off: reload, and keep an editor opened before the stop
-		// from switching it back on with the value it was opened with.
-		if (answer.federationOff) {
-			federationOffSinceEdit.current.add(config.id);
-			await refresh();
-		}
+		// Main switched the remote's Federation off: reload the list.
+		if (answer.federationOff) await refresh();
 		const success = answer.ok && (answer.outcome === 'done' || answer.outcome === 'nothing');
 		setHostResults((prev) => ({
 			...prev,
@@ -257,6 +269,9 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	// Handle save from modal
 	const handleSave = async (config: Partial<SshRemoteConfig>) => {
 		const opened = editingConfig;
+		// A stop of this remote still running decides first whether the switch must stay off.
+		const stopping = config.id ? hostActionsInFlight.current.get(config.id) : undefined;
+		if (stopping) await stopping;
 		const keepOff =
 			opened !== undefined &&
 			config.id === opened.id &&
@@ -266,6 +281,8 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			keepOff ? { ...config, federation: federationFieldFor(false) } : config
 		);
 		if (result.success) {
+			// Saved: the switch is now what this save wrote, so the note of the stop is spent.
+			if (config.id) federationOffSinceEdit.current.delete(config.id);
 			setShowModal(false);
 			setEditingConfig(undefined);
 		}

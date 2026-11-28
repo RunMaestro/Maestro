@@ -28,6 +28,7 @@
 import { isFederationRemote } from '../../shared/federationRemote';
 import { peerAgentRef, readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import {
+	HOST_COPY_RETRY_MS,
 	readHostCopyLeft,
 	type ReturnRunOptions,
 } from '../../shared/maestro-lib/agents/lift-return';
@@ -51,11 +52,7 @@ export const COME_HOME_RETRY_WAIT_MS = 5_000;
 export const COME_HOME_BUSY_WAIT_MS = 10_000;
 /** How long a running host turn is waited out before the agent is left for the next launch. */
 export const COME_HOME_BUSY_MAX_WAIT_MS = 30 * 60_000;
-/**
- * How long after an agent came home its leftover host copy is still dialed for, one try per
- * launch. A remote that is gone for good is not dialed at every launch forever.
- */
-export const HOST_COPY_RETRY_MS = 14 * 24 * 60 * 60_000;
+export { HOST_COPY_RETRY_MS };
 
 /** Refusals that a later attempt can get past: the host did not answer, or the window did not. */
 const RETRYABLE_CODES = new Set([
@@ -348,12 +345,24 @@ export async function runComeHome(
 			const outcome = outcomes.get(id);
 			if (outcome) agents.push(outcome);
 		}
-		for (const { id } of hostCopiesLeft(deps.readAgents(), deps.now())) {
-			const current = deps.readAgents().find((agent) => agent.id === id);
-			if (!current || tried.has(id) || deps.hostingEnabled()) continue;
-			const remoteId = remoteIdOf(current);
-			if (remoteId && unreachable.has(remoteId)) continue;
-			const outcome = await finishHostCopy(current, deps, resolved);
+		// Host copies left behind: lanes side by side too, so a busy copy on one remote (waited out
+		// for up to the busy limit) does not hold up another remote's.
+		const leftovers = hostCopiesLeft(deps.readAgents(), deps.now());
+		const finished = new Map<string, ComeHomeAgentOutcome>();
+		await Promise.all(
+			lanesByRemote(leftovers).map(async (lane) => {
+				for (const { id } of lane) {
+					const current = deps.readAgents().find((agent) => agent.id === id);
+					if (!current || tried.has(id) || deps.hostingEnabled()) continue;
+					const remoteId = remoteIdOf(current);
+					if (remoteId && unreachable.has(remoteId)) continue;
+					const outcome = await finishHostCopy(current, deps, resolved);
+					if (outcome) finished.set(id, outcome);
+				}
+			})
+		);
+		for (const { id } of leftovers) {
+			const outcome = finished.get(id);
 			if (outcome) agents.push(outcome);
 		}
 	}
@@ -364,8 +373,20 @@ export async function runComeHome(
 export interface ComeHomeRunner {
 	/** Start the job, or join the run in flight. */
 	run(): Promise<ComeHomeReport>;
-	/** The report of the last finished run, or null before one finished. */
+	/**
+	 * The report of the last finished run, or null before one finished. A failed outcome is kept
+	 * only while its agent is still moved: one moved back since (Move Back, `maestro-cli unlift`)
+	 * is home, and nothing waits on it.
+	 */
 	lastReport(): ComeHomeReport | null;
+}
+
+function withoutHomeFailures(report: ComeHomeReport, agents: AgentRecord[]): ComeHomeReport {
+	const moved = new Set(movedAgents(agents).map((agent) => agent.id));
+	const outcomes = report.agents.filter(
+		(outcome) => outcome.result !== 'failed' || moved.has(outcome.id)
+	);
+	return outcomes.length === report.agents.length ? report : { ...report, agents: outcomes };
 }
 
 /**
@@ -392,7 +413,7 @@ export function createComeHomeRunner(
 			}
 			return inFlight;
 		},
-		lastReport: () => last,
+		lastReport: () => (last ? withoutHomeFailures(last, deps.readAgents()) : null),
 	};
 }
 

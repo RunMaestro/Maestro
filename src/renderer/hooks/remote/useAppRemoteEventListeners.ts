@@ -1912,9 +1912,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// before the ack, so the host's copy is removed only once this is on disk.
 		if ('returnedFromHost' in patchObj) {
 			const returned = readReturnedFromHost(patchObj.returnedFromHost);
+			// Main stops waiting at `restoreBy` and may then release what the return held on the
+			// host: a restore that reaches this window later is refused, never applied.
+			const restoreBy = typeof patchObj.restoreBy === 'number' ? patchObj.restoreBy : undefined;
 			const refusal = !returned
 				? "Invalid value for field 'returnedFromHost'"
-				: returnRestoreRefusal(session);
+				: restoreBy !== undefined && Date.now() > restoreBy
+					? 'The move back reached this window after Maestro stopped waiting for it'
+					: returnRestoreRefusal(session);
 			if (refusal || !returned) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
@@ -1928,16 +1933,25 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					returned
 				) as unknown as Session;
 			const restored = applyReturn(session);
-			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
+			// Saved first, shown second: a save that fails leaves nothing applied here, so the
+			// return may let the host run what it held without it running here too.
+			// `setMany` answers false for a write it could not make (a full disk): a refusal too.
+			let saveError: string | undefined;
 			try {
-				await window.maestro.sessions.setMany([restored as any], []);
+				if ((await window.maestro.sessions.setMany([restored as any], [])) === false) {
+					saveError = 'the write did not reach the disk';
+				}
 			} catch (persistErr) {
+				saveError = persistErr instanceof Error ? persistErr.message : String(persistErr);
+			}
+			if (saveError !== undefined) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
-					error: `Could not save the agent: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+					error: `Could not save the agent: ${saveError}`,
 				});
 				return;
 			}
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: true,
 			});

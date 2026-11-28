@@ -7358,4 +7358,12 @@ describe('isAwaitingComeHome (a moved agent on its way home)', () => {
 	it('holds nothing for an agent that is home', () => {
 		expect(isAwaitingComeHome(createMockSession())).toBe(false);
 	});
+
+	it("a caller's own reading of the hosting setting decides, so a subscribed view follows it (#2195)", () => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		const session = createMockSession({ liftedTo });
+		expect(isAwaitingComeHome(session, true)).toBe(false);
+		useSettingsStore.setState({ federationHostedAgents: true });
+		expect(isAwaitingComeHome(session, false)).toBe(true);
+	});
 });

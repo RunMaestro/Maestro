@@ -32,6 +32,7 @@ import { AutoFederationCoordinator } from '../../federation/auto-federation';
 import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
 import { feedHostedTurnToDispatchCallbacks } from '../../dispatch-callbacks/hosted-turn-feed';
 import { createComeHomeRunner, type ComeHomeReport } from '../../federation/come-home';
+import { COME_HOME_REPORT_CHANNEL } from '../../../shared/federationComeHome';
 import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
 import { followHostingSetting, type HostingSetting } from '../../federation/hosting-gate';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
@@ -441,7 +442,20 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 	setComeHomeRunner(comeHome);
 	ipcMain.handle(
 		'federation:comeHome',
-		withIpcErrorLogging(opts('comeHome'), async (): Promise<ComeHomeReport> => comeHome.run())
+		withIpcErrorLogging(opts('comeHome'), async (): Promise<ComeHomeReport> => {
+			const report = await comeHome.run();
+			// Every window reads why a moved agent's messages wait, not only the one that ran it.
+			deps.safeSend?.(COME_HOME_REPORT_CHANNEL, report);
+			return report;
+		})
+	);
+	// The last report, for a window opened after the job ran. Null before the first run.
+	ipcMain.handle(
+		'federation:lastComeHomeReport',
+		withIpcErrorLogging(
+			opts('lastComeHomeReport'),
+			async (): Promise<ComeHomeReport | null> => comeHome.lastReport()
+		)
 	);
 	// Move Back from Host: the reverse of `federation:lift` (`maestro-cli unlift`).
 	ipcMain.handle(

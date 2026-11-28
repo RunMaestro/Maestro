@@ -394,6 +394,13 @@ describe('queue frames', () => {
 		expect(queuedTurnsToWire(items)).toEqual(wire);
 	});
 
+	it('carries the read-only and save to History choices, so a Move Back keeps them (#2195)', () => {
+		const chosen: QueuedTurn = { ...items[0], readOnly: true, saveToHistory: false };
+		expect(queuedTurnsToWire([chosen])).toEqual([
+			{ ...wire[0], readOnly: true, saveToHistory: false },
+		]);
+	});
+
 	it('sends a queue.changed as a queue_changed frame', () => {
 		expect(queueChangedFrame('a1', items)).toEqual({
 			type: 'queue_changed',

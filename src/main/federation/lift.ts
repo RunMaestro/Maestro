@@ -33,6 +33,7 @@ import {
 } from '../../shared/maestro-lib/agents/lift-run';
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import {
+	RestoreUnsettledError,
 	runReturnFromHost,
 	type ReturnHostConnection,
 	type ReturnedFromHost,
@@ -239,19 +240,36 @@ export async function setLiftPointerInWindow(
 	if (!reply.success) throw new Error(reply.error || 'The window refused the pointer');
 }
 
-/** Ask the window that owns the agent list to restore a hosted agent. Throws when it refuses. */
+/**
+ * How long past a restore's deadline main still waits for the window's answer: a window that
+ * took the restore just before its deadline is saving it, and its answer is on its way.
+ */
+export const RESTORE_ANSWER_GRACE_MS = 3000;
+
+const NO_RESTORE_ANSWER = 'The window did not answer in time';
+
+/**
+ * Ask the window that owns the agent list to restore a hosted agent. Throws when it refuses.
+ *
+ * The restore carries a deadline (`restoreBy`): the window refuses one that reaches it later, so a
+ * restore main gave up on is never applied after the return released what it held on the host.
+ * No answer even after the grace means the window may still be saving it: that throws
+ * `RestoreUnsettledError`, and the return then releases nothing.
+ */
 export async function restoreReturnedAgentInWindow(
 	win: BrowserWindow | null,
 	agentId: string,
-	returned: ReturnedFromHost
+	returned: ReturnedFromHost,
+	now: () => number = Date.now
 ): Promise<void> {
 	if (!win || !isWebContentsAvailable(win)) throw new Error('The Maestro window is not available');
-	const reply = await requestFromRenderer<PointerReply>(win, 'remote:updateSessionConfig', {
-		args: [agentId, { returnedFromHost: returned }],
-		fallback: { success: false, error: 'The window did not answer in time' },
+	const reply = await requestFromRenderer<PointerReply | null>(win, 'remote:updateSessionConfig', {
+		args: [agentId, { returnedFromHost: returned, restoreBy: now() + LIFT_POINTER_TIMEOUT_MS }],
+		fallback: null,
 		parse: readPointerReply,
-		timeoutMs: LIFT_POINTER_TIMEOUT_MS,
+		timeoutMs: LIFT_POINTER_TIMEOUT_MS + RESTORE_ANSWER_GRACE_MS,
 	});
+	if (!reply) throw new RestoreUnsettledError(NO_RESTORE_ANSWER);
 	if (!reply.success) throw new Error(reply.error || 'The window refused the move back');
 }
 

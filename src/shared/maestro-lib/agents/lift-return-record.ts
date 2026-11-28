@@ -16,7 +16,7 @@ import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 /** A message that waited in the host's queue, to wait in the local queue once the agent is back. */
 export type ReturnedQueuedMessage = Pick<
 	QueuedTurn,
-	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused'
+	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused' | 'readOnly' | 'saveToHistory'
 > & {
 	/** Absent: a message (a value written before the kind was carried). */
 	kind?: QueuedTurn['kind'];
@@ -40,6 +40,12 @@ function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<st
 		...(item.images && item.images.length > 0 ? { images: item.images } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.paused ? { paused: true } : {}),
+		// The sender's own choices replace the local tab's chips for this message
+		// (`queuedItemRunsReadOnly()`), so a message sent read-only runs read-only here too.
+		...(item.readOnly !== undefined
+			? { turnReadOnly: item.readOnly, readOnlyMode: item.readOnly }
+			: {}),
+		...(item.saveToHistory !== undefined ? { turnSaveToHistory: item.saveToHistory } : {}),
 	};
 	const commandText = item.text.trim();
 	if (item.kind !== 'command' || !commandText.startsWith('/')) {
@@ -53,6 +59,13 @@ function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<st
 		commandArgs: space === -1 ? '' : commandText.slice(space + 1).trim(),
 	};
 }
+
+/**
+ * How long after an agent came home its leftover host copy is still dialed for, one try per
+ * launch (the desktop's come-home job). A remote that is gone for good is not dialed at every
+ * launch forever. Here, so the return's own notice can name the limit.
+ */
+export const HOST_COPY_RETRY_MS = 14 * 24 * 60 * 60_000;
 
 /**
  * The host's copy of an agent that is home again but was not removed yet: the restore is written
@@ -77,13 +90,19 @@ export interface HostCopyLeft extends LiftedToPointer {
 	 * Finishing does not bring back a host tab named here that is gone here: the user closed it.
 	 */
 	homeTabIds?: string[];
+	/**
+	 * The user kept the host copy (`--keep-host-copy`): it is never read or removed. Only the
+	 * messages in `carried` are left to do: they came home, wait held in its queue, and are removed
+	 * from it, so none can run there too.
+	 */
+	keep?: true;
 }
 
 /** The stored marker, or undefined when the field is absent or malformed. */
 export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 	const pointer = readLiftedTo(value);
 	if (!pointer) return undefined;
-	const { fetched, returnedAt, carried, homeTabIds } = value as Record<string, unknown>;
+	const { fetched, returnedAt, carried, homeTabIds, keep } = value as Record<string, unknown>;
 	if (typeof fetched !== 'boolean') return undefined;
 	if (typeof returnedAt !== 'number' || !Number.isFinite(returnedAt)) return undefined;
 	if (
@@ -101,6 +120,7 @@ export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 		returnedAt,
 		...(Array.isArray(carried) && carried.length > 0 ? { carried: [...carried] } : {}),
 		...(tabIds.length > 0 ? { homeTabIds: tabIds } : {}),
+		...(keep === true ? { keep: true as const } : {}),
 	};
 }
 
@@ -626,7 +646,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),
 		...(Array.isArray(record.executionQueue) || fromHost.length > 0
-			? { executionQueue: [...fromHost, ...localQueue] }
+			? { executionQueue: withHostBatch(localQueue, fromHost, record.hostCopyLeft) }
 			: {}),
 		...(returned.leftOnHost ? { leftOnHost: returned.leftOnHost } : {}),
 		hostedOptOut: true,
@@ -640,6 +660,25 @@ function readTurnSettings(value: unknown): ReturnedQueuedMessage['turnSettings']
 		...(typeof model === 'string' ? { model } : {}),
 		...(typeof effort === 'string' ? { effort } : {}),
 	};
+}
+
+/**
+ * The local queue with a batch of host messages in it. Host messages go before the ones typed
+ * here, in the host's order: a later batch (one the host took while the agent came home) goes
+ * right after the host messages that came home before it (`HostCopyLeft.carried`), so no message
+ * runs ahead of an earlier one it may depend on.
+ */
+function withHostBatch<T extends { id?: unknown }>(
+	localQueue: T[],
+	fromHost: unknown[],
+	hostCopyLeft: unknown
+): unknown[] {
+	const earlier = new Set(readHostCopyLeft(hostCopyLeft)?.carried ?? []);
+	let at = 0;
+	localQueue.forEach((item, index) => {
+		if (typeof item.id === 'string' && earlier.has(item.id)) at = index + 1;
+	});
+	return [...localQueue.slice(0, at), ...fromHost, ...localQueue.slice(at)];
 }
 
 function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined {
@@ -667,6 +706,8 @@ function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined 
 			queuedAt: raw.queuedAt,
 			text: raw.text,
 			paused: raw.paused === true,
+			...(typeof raw.readOnly === 'boolean' ? { readOnly: raw.readOnly } : {}),
+			...(typeof raw.saveToHistory === 'boolean' ? { saveToHistory: raw.saveToHistory } : {}),
 			...(raw.kind === 'command' ? { kind: 'command' as const } : {}),
 			...(images.length > 0 ? { images } : {}),
 			...(turnSettings ? { turnSettings } : {}),

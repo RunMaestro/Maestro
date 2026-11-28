@@ -23,6 +23,10 @@ export interface QueuedItemSnapshot {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/** Whether the item runs read-only when it is dispatched (`queuedItemRunsReadOnly()`). */
+	readOnly?: boolean;
+	/** The sender's save to History choice for this one message (`turnSaveToHistory`). */
+	saveToHistory?: boolean;
 	/**
 	 * Always false from a desktop: its queue starts a tab's next message in the moment the turn
 	 * before ends, so no message waits for its tab alone (`QueuedTurn.handOver`, U6).

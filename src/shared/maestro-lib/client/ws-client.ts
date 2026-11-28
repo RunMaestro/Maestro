@@ -234,6 +234,8 @@ export function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			...(images ? { images } : {}),
 			// The host sent this item's images before: the mirror keeps the ones it holds (M26).
 			...(!images && item.imagesKept === true ? { imagesKept: true as const } : {}),
+			...(typeof item.readOnly === 'boolean' ? { readOnly: item.readOnly } : {}),
+			...(typeof item.saveToHistory === 'boolean' ? { saveToHistory: item.saveToHistory } : {}),
 		};
 	});
 }
