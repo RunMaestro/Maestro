@@ -1375,6 +1375,20 @@ describe('PeerMirrorService', () => {
 			expect(await h.service.exclusive(async () => 'next')).toBe('next');
 		});
 
+		it('never runs an exclusive task still queued when the service stops', async () => {
+			const a = fakeHost('a', { manualReady: true });
+			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });
+			h.service.start();
+			const work = vi.fn(async () => 'installed');
+			const task = h.service.exclusive(work);
+			await settle();
+			const stopped = h.service.stop();
+			a.open();
+			await stopped;
+			await expect(task).rejects.toThrow('not running');
+			expect(work).not.toHaveBeenCalled();
+		});
+
 		it('reconnects by SSH remote id, and names a remote it does not mirror', async () => {
 			const a = fakeHost('a');
 			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });

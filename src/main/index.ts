@@ -85,11 +85,12 @@ import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
 import {
-	createFederationRuntime,
 	getPeerMirrorService,
 	noteHostedAgentsChanged,
 	onMirrorPush,
+	startFederationWhileHosting,
 } from './federation';
+import { hostingSettingOf, settleHostingAfterExternalChange } from './federation/hosting-gate';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -688,8 +689,8 @@ setModelsRefreshedBroadcaster(safeSend);
  * hosted agents on). The one predicate the host outage and the mirror's redial pace both read.
  */
 const hostsAgentsOn = (peerId: string): boolean => {
-	const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
-	if (!hostedEnabled) return false;
+	// The Federation gate's own rule: on only with the default-off migration's marker written.
+	if (!hostingSettingOf(store).isOn()) return false;
 	const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
 	return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
 };
@@ -774,6 +775,9 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+		// `maestro-cli settings set federationHostedAgents ...` writes the file directly: start or
+		// stop Federation now, not at the next launch.
+		settleHostingAfterExternalChange();
 	},
 	onAgentConfigsChangedExternally: () => {
 		// A provider's custom binary set outside the Settings UI (maestro-cli
@@ -3979,19 +3983,21 @@ app
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
-		// Federation is opportunistic and always on: the peer mirror probes each enabled SSH
-		// remote that has not opted out, one at a time, and mirrors the ones that run a host.
-		const federation = createFederationRuntime({
+		// Federation runs only while hosted agents are on: then the peer mirror probes each
+		// enabled SSH remote that has not opted out, one at a time, and mirrors the ones that run
+		// a host. Off (the default), it is never built and no remote is dialed.
+		const stopFederation = startFederationWhileHosting({
 			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
 			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
 			safeSend,
 			// A host nothing here is hosted on redials slowly while it stays down.
 			hostsAgents: hostsAgentsOn,
+			hosting: hostingSettingOf(store),
 		});
-		federation.start();
-		// Hosted agents switched on or off: the host outages and the redial pace follow at once.
+		// Hosted agents switched on or off: the host outages and the redial pace follow at once
+		// (a no-op on the mirror while hosting is off: no service runs).
 		store.onDidChange(HOSTED_AGENTS_SETTING, () => noteHostedAgentsChanged());
-		app.on('will-quit', () => federation.stop());
+		app.on('will-quit', () => stopFederation());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the

@@ -1,11 +1,12 @@
 /**
  * The Federation peer mirror's place in the main process: the one service instance, the runtime
- * that starts it at boot and stops it on quit, and the push channels.
+ * that starts it while hosted agents are on and stops it when they turn off or the app quits, and
+ * the push channels.
  *
- * Federation is always on and opportunistic: the service probes every enabled SSH remote that has
- * not opted out (`federation: false`), one at a time, and mirrors the ones that run a host. A
- * remote without a host is probed once and left alone until something changes (see
- * `PeerMirrorService`).
+ * Federation runs only while hosted agents are on (`followHostingSetting()`). Then the service
+ * probes every enabled SSH remote that has not opted out (`federation: false`), one at a time, and
+ * mirrors the ones that run a host. A remote without a host is probed once and left alone until
+ * something changes (see `PeerMirrorService`). Off, nothing of it runs and no remote is dialed.
  */
 
 import { getSshForwardManager } from '../../shared/maestro-lib/client/ssh-forward';
@@ -20,6 +21,11 @@ import {
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
+import {
+	emptyAutoFederationSnapshot,
+	type AutoFederationSnapshot,
+} from '../../shared/federationAuto';
+import { followHostingSetting, type HostingSetting } from './hosting-gate';
 
 export { PeerMirrorService } from './peer-mirror-service';
 
@@ -45,6 +51,22 @@ export function getAutoFederation(): AutoFederationCoordinator | null {
 
 export function setAutoFederation(next: AutoFederationCoordinator | null): void {
 	autoFederation = next;
+}
+
+/**
+ * What automatic Federation reports: the coordinator's snapshot, or, while it does not run (hosted
+ * agents off), the idle one: nothing seen and no automatic moves in effect. The IPC and the CLI
+ * bridge both answer this.
+ */
+export function autoFederationSnapshot(): AutoFederationSnapshot {
+	return autoFederation?.snapshot() ?? emptyAutoFederationSnapshot(false);
+}
+
+/** Run Now: a pass while the coordinator runs; while it does not, the idle snapshot (nothing dials). */
+export function runAutoFederationNow(): Promise<AutoFederationSnapshot> {
+	return autoFederation
+		? autoFederation.runNow()
+		: Promise.resolve(emptyAutoFederationSnapshot(false));
 }
 
 /** Pushes the automatic Federation snapshot to every window. */
@@ -123,6 +145,16 @@ export function createFederationRuntime(deps: FederationRuntimeDeps): Federation
 export function noteHostedAgentsChanged(): void {
 	noteHostOutagesChanged();
 	service?.noteHostedAgentsChanged();
+}
+
+/**
+ * The boot start site: build the runtime and run it only while hosted agents are on. Returns the
+ * dispose the app calls on quit (stops a running service).
+ */
+export function startFederationWhileHosting(
+	deps: FederationRuntimeDeps & { hosting: HostingSetting }
+): () => void {
+	return followHostingSetting(deps.hosting, createFederationRuntime(deps));
 }
 
 /** Test seam. */

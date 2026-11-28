@@ -131,6 +131,8 @@ describe('A1.8: a Cue run in a local, SSH, or hosted agent History panel', () =>
 			getMainWindow: () => null,
 			getProcessManager: () => null,
 			readAutoMove: () => false,
+			// History reads the mirror the test installs; the coordinator stays off.
+			hosting: { isOn: () => false, watch: () => () => undefined },
 			getCueHistoryEntries,
 			getCueHistoryGroups,
 		});

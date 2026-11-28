@@ -37,7 +37,12 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { registerFederationHandlers } from '../../../../main/ipc/handlers/federation';
 import { configureImageStore } from '../../../../main/storage/session-image-store';
-import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
+import {
+	getAutoFederation,
+	setAutoFederation,
+	setPeerMirrorServiceForTests,
+	type PeerMirrorService,
+} from '../../../../main/federation';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
@@ -120,6 +125,7 @@ describe('federation IPC handlers', () => {
 			getMainWindow: () => mainWindow as never,
 			getProcessManager: () => null,
 			readAutoMove: () => true,
+			hosting: { isOn: () => true, watch: () => () => undefined },
 		});
 	});
 
@@ -152,6 +158,24 @@ describe('federation IPC handlers', () => {
 		expect(status).toMatchObject({ autoMove: true, running: false });
 		const ran = (await call('federation:autoRun')) as { lastPassAt?: number };
 		expect(typeof ran.lastPassAt).toBe('number');
+	});
+
+	it('with hosted agents off, builds no coordinator and answers the idle snapshot', async () => {
+		handlers.clear();
+		setAutoFederation(null);
+		registerFederationHandlers({
+			readSessions: () => [liftableAgent],
+			readSshRemotes: () => [],
+			readAgentConfigs: () => ({}),
+			getMainWindow: () => mainWindow as never,
+			getProcessManager: () => null,
+			readAutoMove: () => false,
+			hosting: { isOn: () => false, watch: () => () => undefined },
+		});
+		expect(getAutoFederation()).toBeNull();
+		const idle = { autoMove: false, running: false, remotes: [], agents: [] };
+		expect(await call('federation:autoStatus')).toEqual(idle);
+		expect(await call('federation:autoRun')).toEqual(idle);
 	});
 
 	describe('while the peer mirror is not running', () => {
