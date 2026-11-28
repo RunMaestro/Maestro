@@ -36,6 +36,7 @@ import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
 	buildPreLaunchReapScript,
+	confirmCarriedRemoteReaps,
 	newRemotePidFilePath,
 	newRemoteTurnDir,
 	PRE_LAUNCH_REAP_REFUSED_EXIT_CODE,
@@ -960,20 +961,23 @@ export class ChildProcessSpawner {
 				// earlier agent it could not stop, or lost its link or was stopped (it
 				// may never have run them): the earlier turns' reaps it carried go back
 				// to their retry loop. A reap that already ran ends quietly next time.
-				if (
-					takenReaps.length > 0 &&
-					(!completed ||
-						completed.spawnError ||
-						(durableTurnDir && (completed as DurableTurnExit).outcome === 'not-started') ||
-						completed.exitCode === PRE_LAUNCH_REAP_REFUSED_EXIT_CODE ||
-						// A plain launch proves its reaps ran only by ending cleanly: a
-						// lost link, a Stop or a signal may have come before them.
-						(!durableTurnDir &&
-							(completed.exitCode === null ||
-								completed.signal !== null ||
-								isSshConnectionFailure(completed.exitCode))))
+				// Until then they stay visible to a successor launch on the tab.
+				if (takenReaps.length === 0) {
+					// Nothing carried.
+				} else if (
+					!completed ||
+					completed.spawnError ||
+					(durableTurnDir && (completed as DurableTurnExit).outcome === 'not-started') ||
+					completed.exitCode === PRE_LAUNCH_REAP_REFUSED_EXIT_CODE ||
+					// A plain launch proves its reaps ran only by ending cleanly: a
+					// lost link, a Stop or a signal may have come before them.
+					(!durableTurnDir &&
+						(completed.exitCode === null ||
+							completed.signal !== null ||
+							isSshConnectionFailure(completed.exitCode)))
 				)
 					for (const target of takenReaps) reapRemoteAgent(target);
+				else confirmCarriedRemoteReaps(takenReaps);
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
 					: {

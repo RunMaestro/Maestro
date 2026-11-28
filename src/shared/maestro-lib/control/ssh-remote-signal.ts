@@ -109,10 +109,10 @@ function durableAgentLines(dir: string, pidFile: string): string[] {
 		'[ -r "$d/agent" ] && read -r ap as < "$d/agent"',
 		`[ -n "$ap" ] || { [ -r ${pf} ] && read -r ap as < ${pf}; }`,
 		'case "$ap" in ""|*[!0-9]*) ap= ;; esac',
-		// Signal only a proven match: the start time agrees (or the host never
-		// recorded one, as today's pid record allows). A `ps` that prints nothing
-		// proves nothing, so `_maybe` (may the agent still run?) counts it as live.
-		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
+		// Signal only a proven match: the start time agrees, or none was recorded
+		// (the pid alone, as today's pid record allows). A `ps` that prints nothing
+		// now proves nothing, so `_maybe` (may the agent still run?) counts it as live.
+		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; [ -z "$as" ] || [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
 		'_maybe() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; n=$(ps -o lstart= -p "$ap" 2>/dev/null); [ -z "$n" ] || [ -z "$as" ] || [ "$(echo $n)" = "$(echo $as)" ]; }',
 		't="$ap"; [ -n "$ap" ] && [ "$(ps -o pgid= -p "$ap" 2>/dev/null | tr -d " ")" = "$ap" ] && t="-$ap"',
 	];
@@ -140,8 +140,13 @@ function terminateScriptFor(target: RemoteSignalTarget): string {
 		throw new Error('A durable turn has no prompt artifact.');
 	return [
 		...durableAgentLines(target.turnDir, target.pidFile),
-		`if ( umask 077; mkdir "$d" 2>/dev/null ); then printf 'reaped\\n' > "$d/exit"; rm -f -- ${shellEscape(target.pidFile)}; exit 0; fi`,
-		'[ "$(cat "$d/exit" 2>/dev/null)" = reaped ] && exit 0',
+		// A marker that could not be written leaves an empty dir: still a barrier,
+		// and the next reap finishes nothing until it proves something.
+		`if ( umask 077; mkdir "$d" 2>/dev/null ); then printf 'reaped\\n' > "$d/exit" || exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}; rm -f -- ${shellEscape(target.pidFile)}; exit 0; fi`,
+		// One look at the exit record decides: the marker stays; the agent's own
+		// code (always written whole) proves it ended; nothing proves nothing.
+		'x=$(cat "$d/exit" 2>/dev/null)',
+		'[ "$x" = reaped ] && exit 0',
 		'if _same; then',
 		'  kill -TERM -- "$t" 2>/dev/null',
 		'  i=0; while [ "$i" -lt 6 ] && _maybe; do sleep 0.5; i=$((i+1)); done',
@@ -149,9 +154,10 @@ function terminateScriptFor(target: RemoteSignalTarget): string {
 		// Its supervisor reaps it: give the zombie a moment to go.
 		'  i=0; while [ "$i" -lt 10 ] && _maybe; do sleep 0.1; i=$((i+1)); done',
 		'fi',
-		'if [ ! -e "$d/exit" ]; then',
-		`  { [ -z "$ap" ] || _maybe; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
-		'fi',
+		'case "$x" in',
+		'  ""|*[!0-9]*)',
+		`    { [ -z "$ap" ] || _maybe; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE} ;;`,
+		'esac',
 		`rm -f -- ${shellEscape(target.pidFile)}`,
 		`rm -rf -- "$d" 2>/dev/null; [ -d "$d" ] && exit ${DURABLE_CLEANUP_FAILED_EXIT_CODE}`,
 		'exit 0',
@@ -569,6 +575,9 @@ function sshEndpointKey(sshCommand: string, sshArgs: readonly string[]): string 
 
 /**
  * Take the reaps still pending for `sessionId` that its next launch can carry.
+ * They stop retrying on their own; the launch ends each by
+ * {@link confirmCarriedRemoteReaps} (it ran them) or by handing it back to
+ * {@link reapRemoteAgent} (it may not have).
  *
  * The next turn on a tab resumes the same provider session, so an orphan still
  * running there is a second writer. The launch script runs the terminate
@@ -587,7 +596,7 @@ export function takePendingRemoteReaps(
 ): RemoteSignalTarget[] {
 	const endpoint = sshEndpointKey(sshCommand, sshArgs);
 	const taken: RemoteSignalTarget[] = [];
-	for (const [pidFile, entry] of pendingReaps) {
+	for (const entry of pendingReaps.values()) {
 		if (entry.target.sessionId !== sessionId) continue;
 		if (entry.target.promptArtifactPath !== undefined) continue;
 		if (
@@ -595,11 +604,19 @@ export function takePendingRemoteReaps(
 			sshEndpointKey(entry.target.sshCommand, entry.target.sshArgs) !== endpoint
 		)
 			continue;
+		// Kept, without its timer, until the launch confirms it ran: a launch that
+		// is stopped before its script runs must not leave its successor nothing
+		// to carry. Both may run it; a reap that already ran ends quietly.
 		if (entry.timer) clearTimeout(entry.timer);
-		pendingReaps.delete(pidFile);
+		entry.timer = null;
 		taken.push(entry.target);
 	}
 	return taken;
+}
+
+/** A launch ran the reaps it carried (it reached its agent): they are done. */
+export function confirmCarriedRemoteReaps(targets: readonly RemoteSignalTarget[]): void {
+	for (const target of targets) pendingReaps.delete(target.pidFile);
 }
 
 /**

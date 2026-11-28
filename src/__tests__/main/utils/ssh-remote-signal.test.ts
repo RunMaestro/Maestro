@@ -21,6 +21,7 @@ import {
 	__resetPendingRemoteReapsForTest,
 	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
+	confirmCarriedRemoteReaps,
 	DURABLE_CLEANUP_FAILED_EXIT_CODE,
 	DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE,
 	newRemotePidFilePath,
@@ -315,6 +316,7 @@ describe('reapRemoteAgent', () => {
 		expect(takePendingRemoteReaps(target.sessionId, 'ssh', ['u@b', ...STDIN_SHELL])).toEqual([
 			hostB,
 		]);
+		confirmCarriedRemoteReaps([hostB]);
 		expect(takePendingRemoteReaps(target.sessionId, 'ssh', ['u@b', ...STDIN_SHELL])).toEqual([]);
 		// Host A's reap stays with its own retry loop.
 		vi.advanceTimersByTime(1_000);
@@ -343,10 +345,15 @@ describe('reapRemoteAgent', () => {
 		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
 			target,
 		]);
+		// Until the launch confirms it ran, a successor launch still carries it.
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
+			target,
+		]);
+		confirmCarriedRemoteReaps([target]);
 		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
 
 		vi.advanceTimersByTime(1_000);
-		// The taken reap is gone; the prompt owner and the other tab still retry.
+		// The taken reap no longer retries; the prompt owner and the other tab still do.
 		expect(children).toHaveLength(5);
 	});
 

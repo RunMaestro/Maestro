@@ -587,6 +587,68 @@ posixOnly('against a real shell', () => {
 		expect(fs.existsSync(dir)).toBe(false);
 	}, 20_000);
 
+	it('an exit record that is not a code proves nothing: with no agent named, the dir stays', async () => {
+		const dir = newDir();
+		fs.mkdirSync(dir, { mode: 0o700 });
+		// A marker whose write failed, or a record read mid-write.
+		fs.writeFileSync(`${dir}/exit`, '');
+		const run = await runShell(
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile: newPidFile(), sessionId: 's', turnDir: dir },
+			]) + 'echo launched\n'
+		);
+		expect(run.code).toBe(PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+		expect(fs.existsSync(dir)).toBe(true);
+	}, 20_000);
+
+	it('a reattach that cannot read the output ends without reporting a drain', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		fs.mkdirSync(dir, { mode: 0o700 });
+		fs.writeFileSync(`${dir}/out`, 'unread');
+		fs.writeFileSync(`${dir}/err`, '');
+		fs.writeFileSync(`${dir}/exit`, '0\n');
+		fs.chmodSync(`${dir}/out`, 0o000);
+		try {
+			const run = await runShell(buildDurableReattachScript(dir, pidFile, 0, 0));
+			expect(run.code).toBe(1);
+			const { reader } = readStderr(run.err);
+			expect(reader.endCode).toBeNull();
+			expect(reader.gone).toBe(false);
+		} finally {
+			fs.chmodSync(`${dir}/out`, 0o600);
+		}
+	}, 20_000);
+
+	it('a zombie agent under a dead supervisor is gone: the stream does not wait on it', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		fs.mkdirSync(dir, { mode: 0o700 });
+		fs.writeFileSync(`${dir}/out`, 'last words');
+		fs.writeFileSync(`${dir}/err`, '');
+		fs.writeFileSync(`${dir}/sup`, '999999 Thu Jan  1 00:00:00 1970\n');
+		const parent = spawn(
+			'perl',
+			['-e', '$| = 1; my $p = fork(); if (!$p) { exit 0 } print "$p\n"; sleep 30'],
+			{ stdio: ['ignore', 'pipe', 'ignore'] }
+		);
+		let said = '';
+		parent.stdout.on('data', (chunk: Buffer) => (said += chunk.toString()));
+		try {
+			for (let i = 0; i < 100 && !said.includes('\n'); i++)
+				await new Promise((r) => setTimeout(r, 50));
+			const zombie = said.trim();
+			await new Promise((r) => setTimeout(r, 200));
+			const started = execFileSync('ps', ['-o', 'lstart=', '-p', zombie]).toString().trim();
+			fs.writeFileSync(`${dir}/agent`, `${zombie} ${started}\n`);
+			const run = await runShell(buildDurableReattachScript(dir, pidFile, 0, 0));
+			expect(run.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
+			expect(agentOut(run.out).toString()).toBe('last words');
+		} finally {
+			parent.kill('SIGKILL');
+		}
+	}, 20_000);
+
 	it('a Stop reaches the agent through the dir copy once the day-old sweep took its pid record', async () => {
 		const pidFile = newPidFile();
 		const dir = newDir();

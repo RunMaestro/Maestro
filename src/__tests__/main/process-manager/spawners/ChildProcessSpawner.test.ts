@@ -988,8 +988,9 @@ describe('ChildProcessSpawner', () => {
 				expect(launch.indexOf(orphanPidFile)).toBeLessThan(launch.indexOf(nextPidFile));
 				expect(launch.endsWith('exec codex exec --json\n')).toBe(true);
 
-				// Taken once: a third launch carries no reap.
+				// Confirmed by a launch that ended cleanly: a third launch carries no reap.
 				closeWith(0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(2));
 				spawner.spawn(sshConfig());
 				const third = mockChildProcess.stdin.write.mock.calls[0][0] as string;
 				expect(third).not.toContain(orphanPidFile);
@@ -1178,7 +1179,10 @@ describe('ChildProcessSpawner', () => {
 			// The reap comes first, outside the envelope: a staging failure cannot skip it.
 			expect(written.indexOf(orphan.pidFile)).toBeGreaterThanOrEqual(0);
 			expect(written.indexOf(orphan.pidFile)).toBeLessThan(written.indexOf('\n{\n'));
-			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+			// Still visible to a successor launch until this one confirms it ran.
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+				expect.objectContaining({ pidFile: orphan.pidFile }),
+			]);
 			// The host never ran the launch (no started marker): the reap goes back.
 			closeWith(mockChildProcess, 255);
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
@@ -1207,7 +1211,10 @@ describe('ChildProcessSpawner', () => {
 			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
 			expect(written).toContain(`exit ${PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}`);
 			expect(written.indexOf(orphan.turnDir)).toBeLessThan(written.indexOf('exec claude'));
-			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+			// Still visible to a successor launch until this one confirms it ran.
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+				expect.objectContaining({ pidFile: orphan.pidFile }),
+			]);
 			closeWith(mockChildProcess, PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 			await vi.waitFor(() =>
@@ -1235,7 +1242,10 @@ describe('ChildProcessSpawner', () => {
 				childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
 				mockSpawn.mockClear();
 				spawner.spawn(sshConfig(false));
-				expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+				// Still visible to a successor launch until this one confirms it ran.
+				expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+					expect.objectContaining({ pidFile: orphan.pidFile }),
+				]);
 				closeWith(mockChildProcess, code, signal);
 				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 				await vi.waitFor(() =>
@@ -1243,6 +1253,29 @@ describe('ChildProcessSpawner', () => {
 				);
 			}
 		);
+
+		it('a successor launched before a stopped launch settles still carries the earlier reap', () => {
+			const { processes, spawner } = createTestContext();
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-55555555-5555-4555-8555-555555555555.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-55555555-5555-4555-8555-555555555555',
+			};
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			spawner.spawn(sshConfig(false));
+			const first = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(first).toContain(orphan.turnDir);
+			// Stopped and released before its ssh closed: the next send starts now.
+			processes.delete('test-session');
+			spawner.spawn(sshConfig(false));
+			const second = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(second).toContain(orphan.turnDir);
+			expect(second.indexOf(orphan.turnDir)).toBeLessThan(second.indexOf('exec claude'));
+		});
 
 		it('a closed durable turn forgets its record and registers its reap at once', () => {
 			const { processes, spawner } = createTestContext();

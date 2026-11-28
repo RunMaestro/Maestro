@@ -130,6 +130,8 @@ const ALIVE_FUNCTION = [
 	'  read -r p started < "$1" || return 1',
 	'  case "$p" in ""|*[!0-9]*) return 1 ;; esac',
 	'  kill -0 "$p" 2>/dev/null || return 1',
+	// A zombie writes nothing more: it is no live agent or supervisor.
+	'  case "$(ps -o stat= -p "$p" 2>/dev/null)" in *Z*) return 1 ;; esac',
 	// A `ps` that prints nothing (now or when the record was written) proves
 	// nothing: the process answers, so it lives.
 	'  now=$(ps -o lstart= -p "$p" 2>/dev/null)',
@@ -158,11 +160,13 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 		'while :; do',
 		'  f=0; [ -e "$d/exit" ] && f=1',
 		'  m=0',
-		'  n=$(wc -c < "$d/out" 2>/dev/null) || n=$o; n=$((n+0))',
+		// A file that is there but cannot be read ends this attempt: a reattach
+		// tries again from the same offsets, never reporting a drain it did not do.
+		'  n=$(wc -c < "$d/out" 2>/dev/null) || { [ -e "$d/out" ] && exit 1; n=$o; }; n=$((n+0))',
 		// A copy that cannot write means the channel is gone: a stale loop
 		// must not outlive its link.
 		'  if [ "$n" -gt "$o" ]; then tail -c +$((o+1)) "$d/out" | head -c $((n-o)) || exit 1; o=$n; m=1; fi',
-		'  n=$(wc -c < "$d/err" 2>/dev/null) || n=$e; n=$((n+0))',
+		'  n=$(wc -c < "$d/err" 2>/dev/null) || { [ -e "$d/err" ] && exit 1; n=$e; }; n=$((n+0))',
 		'  if [ "$n" -gt "$e" ]; then',
 		`    z=$((n-e)); [ "$z" -gt ${MAX_STDERR_FRAME_BYTES} ] && z=${MAX_STDERR_FRAME_BYTES}`,
 		"    printf '\\036D%d\\n' $z >&2",
@@ -261,8 +265,11 @@ export function buildDurableLaunchScript(innerStdin: string, dir: string, pidFil
 		// A copy of the agent's pid record inside the turn dir, which the day-old
 		// pid record sweep does not touch: a cleanup can still find and confirm
 		// the agent of a turn that runs longer than that.
-		'  printf \'%s %s\\n\' "$!" "$(ps -o lstart= -p $! 2>/dev/null)" > "$d/agent"',
-		'  wait $!; c=$?',
+		// Its start time, tried a few times: a `ps` that hiccups here would leave
+		// a record no later check could match.
+		'  a=$!; s=; i=0; while [ -z "$s" ] && [ "$i" -lt 5 ]; do s=$(ps -o lstart= -p "$a" 2>/dev/null); [ -n "$s" ] || sleep 0.1; i=$((i+1)); done',
+		'  printf \'%s %s\\n\' "$a" "$s" > "$d/agent"',
+		'  wait "$a"; c=$?',
 		'  printf \'%s\\n\' "$c" > "$d/exit.tmp" && mv -f "$d/exit.tmp" "$d/exit"',
 		') < /dev/null > /dev/null 2>&1 &',
 		'exec 3<&-',
