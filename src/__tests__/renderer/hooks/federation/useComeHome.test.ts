@@ -11,6 +11,9 @@ import {
 	useComeHome,
 } from '../../../../renderer/hooks/federation/useComeHome';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
+import { captureException } from '../../../../renderer/utils/sentry';
+
+vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
 const report = { startedAt: 1, finishedAt: 2, agents: [] };
@@ -47,6 +50,23 @@ describe('useComeHome', () => {
 		rerender({ enabled: true, sessionsLoaded: true, onReport: vi.fn() });
 		await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS * 2);
 		expect(comeHome).toHaveBeenCalledTimes(1);
+	});
+
+	it('a job that fails goes to Sentry and is shown, never only logged (R9)', async () => {
+		useNotificationStore.setState({ toasts: [] });
+		const failure = new Error('the window did not answer');
+		comeHome.mockRejectedValueOnce(failure);
+		const onReport = vi.fn();
+		renderHook(() => useComeHome({ enabled: true, sessionsLoaded: true, onReport }));
+		await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS);
+		expect(onReport).not.toHaveBeenCalled();
+		expect(captureException).toHaveBeenCalledWith(failure, {
+			tags: { area: 'federation-come-home' },
+		});
+		const toasts = useNotificationStore.getState().toasts;
+		expect(toasts).toHaveLength(1);
+		expect(toasts[0]).toMatchObject({ color: 'red', dismissible: true });
+		expect(toasts[0].message).toContain('the window did not answer');
 	});
 
 	it('does nothing outside the lifecycle owner', async () => {

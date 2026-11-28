@@ -10,9 +10,28 @@ import { useEffect, useRef } from 'react';
 import { summarizeComeHomeReport, type ComeHomeReport } from '../../../shared/federationComeHome';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 /** A short beat after the agents load, so the window's request handlers are wired. */
 export const COME_HOME_START_DELAY_MS = 2_000;
+
+/**
+ * The job itself failed (not one agent's return: those are in the report). Reported to Sentry, and
+ * told to the person, since the agents it was to bring home are still moved.
+ */
+export function showComeHomeFailure(error: unknown): void {
+	const message = error instanceof Error ? error.message : String(error);
+	logger.error('[ComeHome] The job that brings moved agents home failed', undefined, {
+		error: message,
+	});
+	captureException(error, { tags: { area: 'federation-come-home' } });
+	notifyToast({
+		color: 'red',
+		title: 'Agents moved onto a host could not be brought back',
+		message: `${message}\nMaestro tries again at the next launch. To try now: maestro-cli unlift --all`,
+		dismissible: true,
+	});
+}
 
 /**
  * The one notice after the job: which agents came home, and for one that came back offline, what
@@ -51,11 +70,7 @@ export function useComeHome({ enabled, sessionsLoaded, onReport }: UseComeHomeOp
 			fired = true;
 			comeHome()
 				.then((report) => onReportRef.current?.(report))
-				.catch((error: unknown) => {
-					logger.error('[ComeHome] The job that brings moved agents home failed', undefined, {
-						error: String(error),
-					});
-				});
+				.catch(showComeHomeFailure);
 		}, COME_HOME_START_DELAY_MS);
 		return () => {
 			// Torn down before the beat elapsed: let the next run of the effect try.
