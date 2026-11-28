@@ -90,17 +90,19 @@ export function hostCopiesLeft(agents: readonly AgentRecord[], now: number): Age
 }
 
 /**
- * Why the host must not be dialed for this agent, or undefined when it may be. A remote the user
- * deleted, disabled, or opted out of Federation is not dialed: the agent comes back offline, so it
- * is never stranded on a host Maestro may not reach.
+ * Why the host must not be dialed for this agent, or undefined when it may be. An agent with no
+ * SSH remote turned on, or a remote the user deleted, disabled, or opted out of Federation, is not
+ * dialed: the agent comes back offline, so it is never stranded on a host Maestro may not reach.
  */
 export function onlineSkipReason(
 	agent: AgentRecord,
 	remotes: readonly SshRemoteConfig[]
 ): string | undefined {
-	const ssh = (agent as { sessionSshRemoteConfig?: { remoteId?: unknown } }).sessionSshRemoteConfig;
-	const remoteId = typeof ssh?.remoteId === 'string' ? ssh.remoteId : undefined;
-	if (!remoteId) return undefined; // The return refuses it with its own reason (RETURN_NO_SSH).
+	const ssh = (agent as { sessionSshRemoteConfig?: { enabled?: boolean; remoteId?: unknown } })
+		.sessionSshRemoteConfig;
+	const remoteId = typeof ssh?.remoteId === 'string' && ssh.remoteId ? ssh.remoteId : undefined;
+	// The same rule as the return's own (`RETURN_NO_SSH`): the host is reached through this remote.
+	if (!ssh?.enabled || !remoteId) return 'It has no SSH remote turned on in Edit Agent.';
 	const remote = remotes.find((candidate) => candidate.id === remoteId);
 	if (!remote) return 'Its SSH remote is no longer configured on this machine.';
 	if (remote.enabled === false) return `Its SSH remote "${remote.name}" is disabled.`;
@@ -180,6 +182,7 @@ async function bringHome(
 	let waitedMs = 0;
 	let lastError = '';
 	let skipReason: string | undefined;
+	let refusedForGood = false;
 	while (attempts < timing.onlineAttempts) {
 		// Read before every try, since a wait can be long: hosting turned on leaves the agent where
 		// the person now wants it, and a remote disabled or opted out meanwhile is not dialed.
@@ -207,15 +210,17 @@ async function bringHome(
 			continue;
 		}
 		lastError = answer.error;
+		// A refusal no retry can fix must not leave the agent moved: restore it here now.
 		if (!RETRYABLE_CODES.has(answer.code)) {
-			outcome.notices.push(answer.error);
-			return outcome;
+			refusedForGood = true;
+			break;
 		}
 		attempts++;
 		if (attempts < timing.onlineAttempts) await deps.sleep(timing.retryWaitMs);
 	}
 
-	// The host did not answer: come back with this machine's copy, so the agent works now.
+	// The host did not answer, may not be dialed, or refused for good: come back with this
+	// machine's copy, so the agent works now and nothing stays moved.
 	if (deps.hostingEnabled()) return null;
 	const offline = await deps.returnAgent(agent.id, { offline: true });
 	if (!offline.ok) {
@@ -231,6 +236,7 @@ async function bringHome(
 		...(newestRowAt(agent) !== undefined ? { lastLocalRowAt: newestRowAt(agent) } : {}),
 	};
 	if (skipReason) outcome.notices.push(`The host was not contacted. ${skipReason}`);
+	else if (refusedForGood) outcome.notices.push(`The return was refused: ${lastError}`);
 	else if (lastError) outcome.notices.push(`The host did not answer: ${lastError}`);
 	outcome.notices.push(...(offline.result.notices ?? []));
 	return outcome;

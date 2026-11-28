@@ -24,7 +24,8 @@
  * row, so nothing comes twice), the queue items that came home already (`carried`) are skipped,
  * and then the copy is removed.
  *
- * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
+ * `offline` skips 2 and 4 for a host that cannot be reached (and needs no SSH remote, so an agent
+ * whose SSH settings are off or gone is never stranded): the agent comes back with only what
  * this machine kept, and the result says the host's copy is still there. The marker says so too
  * (`fetched: false`): a later return that reaches the host brings what the host wrote since (the
  * transcripts merge row by row, so the rows this machine wrote meanwhile stay), then removes it.
@@ -132,13 +133,6 @@ export async function runReturnFromHost(
 			`"${agent.name}" is not hosted: nothing to move back.`
 		);
 	}
-	const remoteId = sshRemoteIdOf(agent);
-	if (!remoteId) {
-		throw new LiftRunError(
-			'RETURN_NO_SSH',
-			`"${agent.name}" has no SSH remote to run on once it is back. Set one in Edit Agent first.`
-		);
-	}
 	const from = peerAgentRef(pointer.peer, pointer.agentId);
 	const summary = { id: agent.id, name: agent.name };
 	const now = deps.now ?? Date.now;
@@ -174,6 +168,14 @@ export async function runReturnFromHost(
 		};
 	}
 
+	// Only the offline return above may run without an SSH remote: the host is reached through it.
+	const remoteId = sshRemoteIdOf(agent);
+	if (!remoteId) {
+		throw new LiftRunError(
+			'RETURN_NO_SSH',
+			`"${agent.name}" has no SSH remote to reach its host through. Move it back offline, or set one in Edit Agent first.`
+		);
+	}
 	const connection = await deps.connect(remoteId, pointer.peer);
 	let released = false;
 	try {

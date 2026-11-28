@@ -260,17 +260,42 @@ describe('runComeHome', () => {
 		expect(store.get('a')?.liftedTo).toBeDefined();
 	});
 
-	it('a refusal no retry can fix is reported and the job moves on', async () => {
-		const { deps } = world([agent('a'), agent('b')], (id) =>
-			id === 'a' ? refused('RETURN_NO_SSH', 'no remote') : ok()
+	it('a refusal no retry can fix ends in a local restore, never a moved agent (R1)', async () => {
+		const { deps, store, calls } = world([agent('a'), agent('b')], (id, options) =>
+			id === 'a' && !options.offline ? refused('AGENT_NOT_FOUND', 'host refused') : ok()
 		);
 		const report = await runComeHome(deps);
 		expect(report.agents.map((o) => [o.id, o.result])).toEqual([
-			['a', 'failed'],
+			['a', 'offline'],
 			['b', 'online'],
 		]);
-		expect(report.agents[0].notices).toEqual(['no remote']);
+		expect(calls.filter((c) => c.id === 'a').map((c) => c.options.offline === true)).toEqual([
+			false,
+			true,
+		]);
+		expect(report.agents[0].notices.join(' ')).toContain('The return was refused: host refused');
+		expect(movedAgents([...store.values()])).toEqual([]);
+		expect(store.get('a')?.hostCopyLeft).toMatchObject({ fetched: false });
+		expect(deps.sleep).not.toHaveBeenCalled();
 	});
+
+	it.each([
+		['no SSH settings', undefined],
+		['SSH turned off', { enabled: false, remoteId: 'remote-1' }],
+		['no remote id', { enabled: true }],
+	])(
+		'an agent with %s is not dialed: it comes home offline, marked, and the notice says why (R1)',
+		async (_label, ssh) => {
+			const moved = { ...agent('a'), sessionSshRemoteConfig: ssh } as unknown as AgentRecord;
+			const { deps, store, calls } = world([moved], ok);
+			const report = await runComeHome(deps);
+			expect(calls).toEqual([{ id: 'a', options: { offline: true } }]);
+			expect(report.agents[0].result).toBe('offline');
+			expect(report.agents[0].notices.join(' ')).toContain('no SSH remote turned on');
+			expect(movedAgents([...store.values()])).toEqual([]);
+			expect(store.get('a')?.hostCopyLeft).toMatchObject({ fetched: false });
+		}
+	);
 
 	it('an agent moved back by the user meanwhile is skipped', async () => {
 		const { deps, store } = world([agent('a'), agent('b')], ok);

@@ -523,6 +523,21 @@ describe('runReturnFromHost', () => {
 		expect(result.notices?.[0]).toMatch(/maestro-cli remove-agent host-1/);
 	});
 
+	it.each([
+		['no SSH settings', { sessionSshRemoteConfig: undefined }],
+		['SSH turned off', { sessionSshRemoteConfig: { enabled: false, remoteId: 'remote-1' } }],
+		['no remote id', { sessionSshRemoteConfig: { enabled: true, remoteId: '' } }],
+	])('moves back offline with %s, so no agent stays moved (R1)', async (_label, patch) => {
+		const d = deps(hostedAgent(patch as Partial<AgentRecord>));
+		const result = await runReturnFromHost('agent-1', { offline: true }, d.value);
+		expect(d.connect).not.toHaveBeenCalled();
+		expect(d.restore).toHaveBeenCalledWith('agent-1', {
+			tabs: [],
+			hostCopyLeft: copyLeft(false),
+		});
+		expect(result.hostCopyRemoved).toBe(false);
+	});
+
 	describe('a host copy left behind (I3, I4)', () => {
 		/** A store the restore writes through `withReturnedFromHost()`, as the window does. */
 		function stored(agent: AgentRecord, client = hostClient()) {
