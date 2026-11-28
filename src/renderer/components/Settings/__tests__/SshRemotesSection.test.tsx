@@ -286,6 +286,63 @@ describe('Stop Host and Remove Host', () => {
 		);
 	});
 
+	it('a save made while the stop still runs waits for it, so it cannot switch Federation back on (#2195)', async () => {
+		let answerStop: (answer: unknown) => void = () => {};
+		stopRemoteHostFromWindow.mockImplementation(
+			() => new Promise((resolve) => (answerStop = resolve))
+		);
+		saveConfig.mockClear();
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('NeeMAC')).getByTitle('Edit'));
+		fireEvent.click(within(rowOf('NeeMAC')).getByLabelText('Stop Host'));
+		fireEvent.click(
+			within(screen.getByRole('dialog', { name: 'Stop Host' })).getByText('Stop Host')
+		);
+		await waitFor(() => expect(stopRemoteHostFromWindow).toHaveBeenCalled());
+		// Main has written Federation off, but its answer has not arrived yet.
+		const saving = modalProps.current!.onSave({ ...configs[1], federation: undefined });
+		await Promise.resolve();
+		expect(saveConfig).not.toHaveBeenCalled();
+		answerStop({
+			ok: true,
+			outcome: 'done',
+			message: 'The host on NeeMAC is stopped.',
+			federationOff: true,
+		});
+		await saving;
+		expect(saveConfig).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: '2', federation: false })
+		);
+	});
+
+	it('an editor opened from a list not reloaded since the stop keeps Federation off, until a save spends the note (#2195)', async () => {
+		stopRemoteHostFromWindow.mockResolvedValue({
+			ok: true,
+			outcome: 'done',
+			message: 'The host on NeeMAC is stopped.',
+			federationOff: true,
+		});
+		saveConfig.mockClear();
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('NeeMAC')).getByLabelText('Stop Host'));
+		fireEvent.click(
+			within(screen.getByRole('dialog', { name: 'Stop Host' })).getByText('Stop Host')
+		);
+		await waitFor(() => expect(screen.getByTestId('ssh-remote-host-result')).toBeInTheDocument());
+		// The list still shows Federation on (this one never reloads): the editor opens with it.
+		fireEvent.click(within(rowOf('NeeMAC')).getByTitle('Edit'));
+		await modalProps.current!.onSave({ ...configs[1], federation: undefined });
+		expect(saveConfig).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: '2', federation: false })
+		);
+		// Saved: what the user saves next is what is written.
+		fireEvent.click(within(rowOf('NeeMAC')).getByTitle('Edit'));
+		await modalProps.current!.onSave({ ...configs[1], federation: undefined });
+		expect(saveConfig).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: '2', federation: undefined })
+		);
+	});
+
 	it('saves Federation as edited when no stop ran while the editor was open', async () => {
 		saveConfig.mockClear();
 		render(<SshRemotesSection theme={theme} />);
