@@ -36,6 +36,7 @@ import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
 import { noteSshExit } from '../../ssh-reachability';
+import { readHostingSwitches } from '../../federation/hosting-gate';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
@@ -278,7 +279,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
-				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true);
+				liftedSendRefusal(lifted, readHostingSwitches(settingsStore)[HOSTED_AGENTS_SETTING]);
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

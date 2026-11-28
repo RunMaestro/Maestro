@@ -478,7 +478,10 @@ export class AutoFederationCoordinator {
 		const manual =
 			'Use Start Host (right-click one of its agents > Move to Host), or run maestro-cli remote-host install <ssh-remote> --start.';
 		if (connection === 'connected') {
-			this.setRemote(remote, { state: 'ready' });
+			// What an earlier setup left for a person to do (a lingerFix, a service that did not start)
+			// still stands.
+			const fix = this.serviceFixes.get(remote.id);
+			this.setRemote(remote, { state: 'ready', ...(fix ? { fix, needsYou: true } : {}) });
 		} else if (connection === 'host-down') {
 			this.setRemote(remote, {
 				state: 'waiting',

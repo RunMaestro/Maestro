@@ -4978,6 +4978,56 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 
+	describe('the Federation switches before the default-off migration ran', () => {
+		const MARKER = 'migration_federationHostingDefaultOffV1';
+		/** A settings store over `data`: `get` and `set` read and write it. */
+		const backStoreWith = (data: Record<string, unknown>) => {
+			mockSettingsStore.get.mockImplementation((key: string) => data[key]);
+			mockSettingsStore.set.mockImplementation((key: string, value: unknown) => {
+				data[key] = value;
+			});
+			mockSettingsStore.store = data;
+			return data;
+		};
+
+		it('read as off through settings:get and settings:getAll while the old true is on disk', async () => {
+			backStoreWith({ federationHostedAgents: true, federationAutoMove: true, fontSize: 14 });
+
+			expect(await handlers.get('settings:get')!({}, 'federationHostedAgents')).toBe(false);
+			expect(await handlers.get('settings:get')!({}, 'federationAutoMove')).toBe(false);
+			expect(await handlers.get('settings:get')!({}, 'fontSize')).toBe(14);
+			expect(await handlers.get('settings:getAll')!({})).toEqual({
+				federationHostedAgents: false,
+				federationAutoMove: false,
+				fontSize: 14,
+			});
+		});
+
+		it('read as stored once the migration ran', async () => {
+			backStoreWith({ federationHostedAgents: true, federationAutoMove: false, [MARKER]: true });
+
+			expect(await handlers.get('settings:get')!({}, 'federationHostedAgents')).toBe(true);
+			expect(await handlers.get('settings:getAll')!({})).toMatchObject({
+				federationHostedAgents: true,
+				federationAutoMove: false,
+			});
+		});
+
+		it('a write of one switch runs the migration first, so it counts and the other old true does not', async () => {
+			const data = backStoreWith({ federationHostedAgents: false, federationAutoMove: true });
+
+			expect(await handlers.get('settings:set')!({}, 'federationHostedAgents', true)).toBe(true);
+
+			expect(data).toMatchObject({
+				federationHostedAgents: true,
+				federationAutoMove: false,
+				[MARKER]: true,
+			});
+			expect(await handlers.get('settings:get')!({}, 'federationHostedAgents')).toBe(true);
+			expect(await handlers.get('settings:get')!({}, 'federationAutoMove')).toBe(false);
+		});
+	});
+
 	it('reads media status using the live host setting', async () => {
 		const runtime = { binaries: {}, models: {} };
 		const status = { profiles: [], models: [], missing: ['model-directory'] };
